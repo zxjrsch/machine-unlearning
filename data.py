@@ -1,8 +1,7 @@
-
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Tuple, Union
+from typing import Iterator, List, Tuple, Union, Any
 
 import torch
 from loguru import logger
@@ -90,14 +89,29 @@ class ModelInspector:
     
     
 class GraphGenerator(ModelInspector):
-    def __init__(self, model: HookedMNISTClassifier, checkpoint_path: Union[Path, None]=None, forget_digit: int = 9, device: str = 'cuda:1'):
+    def __init__(self, 
+                model: HookedMNISTClassifier, 
+                checkpoint_path: Union[Path, None]=None, 
+                graph_dataset_dir: Path = Path('./datasets/Graphs'),
+                process_save_batch_size: int = 64,
+                forget_digit: int = 9, 
+                device: str = 'cuda:1'
+    ) -> None:
+        
         super().__init__(model)
 
         if checkpoint_path is not None:
             self.model = torch.compile(self.model)
             self.model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
+            logger.info(f'Loaded pretrained model from {checkpoint_path}')
+
+        graph_dataset_dir.mkdir(exist_ok=True)
+        self.graph_dataset_dir = graph_dataset_dir
+
+        self._save_redundant_features = True
 
         self.forget_digit = forget_digit
+        self.process_save_batch_size = process_save_batch_size
         self.device = device
         self.data_loader: DataLoader = self.get_dataloader()
         self.num_vertices = self.count_trainable_parameters()
@@ -123,10 +137,16 @@ class GraphGenerator(ModelInspector):
         weight_feature_dim = self.weight_feature.shape
         assert weight_feature_dim == torch.Size((self.num_vertices, ))
 
-
     def get_weight_feature(self) -> Tensor:
         trainable_layers = [torch.flatten(p) for p in self.model.parameters() if p.requires_grad]
-        return torch.cat(trainable_layers)
+        flattened_model_weights = torch.cat(trainable_layers)
+
+        if self._save_redundant_features:
+            file_name: Path = self.graph_dataset_dir / 'flattened_model_weights.pt'
+            torch.save(flattened_model_weights, file_name)
+            logger.info(f'Weights saved at {file_name}')
+        
+        return flattened_model_weights
 
     def get_edge_matrix(self) -> List[Tensor]:
         dims = self.model.dim_array + [self.model.out_dim]
@@ -154,10 +174,12 @@ class GraphGenerator(ModelInspector):
                 forward_edges = torch.cartesian_prod(A[:, activation_idx], B[activation_idx, :]).T
                 edge_matrices_list.append(forward_edges)
                 del forward_edges
+                torch.cuda.empty_cache()
 
                 backward_edges = torch.cartesian_prod(B[activation_idx, :], A[:, activation_idx]).T
                 edge_matrices_list.append(backward_edges)
                 del backward_edges
+                torch.cuda.empty_cache()
 
                 # In edges 
                 I_edges = torch.cartesian_prod(B[activation_idx, :], B[activation_idx, :])
@@ -165,6 +187,7 @@ class GraphGenerator(ModelInspector):
                 I_edges = I_edges[~masks]
                 edge_matrices_list.append(I_edges.T)
                 del I_edges, masks
+                torch.cuda.empty_cache()
 
                 # Out edges 
                 O_edges = torch.cartesian_prod(A[:, activation_idx], A[:, activation_idx])
@@ -172,6 +195,7 @@ class GraphGenerator(ModelInspector):
                 O_edges = O_edges[~masks]
                 edge_matrices_list.append(O_edges.T)
                 del O_edges, masks
+                torch.cuda.empty_cache()
 
         # edge case 
         # final layer (the classifier) has only edges of In-type
@@ -183,10 +207,18 @@ class GraphGenerator(ModelInspector):
             I_edges = I_edges[~masks]
             edge_matrices_list.append(I_edges.T)
             del I_edges, masks
+            torch.cuda.empty_cache()
 
-        return torch.cat(edge_matrices_list, dim=1)
+        edge_matrix = torch.cat(edge_matrices_list, dim=1)
+        torch.cuda.empty_cache()
+
+        if self._save_redundant_features:
+            file_name: Path = self.graph_dataset_dir / 'graph_edge_matrix.pt'
+            torch.save(edge_matrix, file_name)
+            logger.info(f'Weights saved at {file_name}')
+
+        return edge_matrix
                 
-    
     def flatten_and_zero_grad(self) -> Tensor:
         gradients = []
         for name, param in self.model.named_parameters():
@@ -233,9 +265,9 @@ class GraphGenerator(ModelInspector):
         # logger.info(f'{out_features_vector.shape}')
 
         return in_features_vector, out_features_vector
-
-    def get_forward_backward_features(self) -> None:
-        # saves grads and activations 
+    
+    def save_forward_backward_features(self, limit: Union[int, None] = 256) -> None:
+        """Saves grads and activations."""
 
         assert self.data_loader # data loader must be initialized before getting gradient features
         self.model: HookedMNISTClassifier = self.model.to(self.device)
@@ -243,7 +275,13 @@ class GraphGenerator(ModelInspector):
 
         self.model.capture_mode(is_on=True)
         self.model.eval()
-        for i, (input, target) in enumerate(self.data_loader):
+
+        eumerator = list(enumerate(self.data_loader))
+        if limit is not None:
+            eumerator = eumerator[:limit]
+
+        batch, batch_idx, total_batches = [], 0, math.ceil(len(eumerator) / self.process_save_batch_size)
+        for i, (input, target) in eumerator:
             input, target = input.to(self.device), target.to(self.device)
             assert torch.all(target == self.forget_digit)   # sanity check
             preds = self.model(input)
@@ -255,13 +293,64 @@ class GraphGenerator(ModelInspector):
 
             # dim = [num_vertices, num_features]
             graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
-
+            
             # # tracer
             # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
             # logger.info(graph_feature_matrix.shape)
 
+            batch.append(graph_feature_matrix)
+
+            if len(batch) == self.process_save_batch_size:
+                batch_idx += 1
+                batch_tensor = torch.stack(batch, dim=0)
+                logger.info(f'Saving batch {batch_idx} of {total_batches}')
+                file_name = self.graph_dataset_dir / f'batch_{batch_idx}.pt'
+                torch.save(batch_tensor, file_name)
+                batch = []
+                torch.cuda.empty_cache()
+
             self.model.reset_activations()
+            torch.cuda.empty_cache()
 
-            # turn this into batch processing
-            return Data(x=graph_feature_matrix, edge_attr=self.edge_matrix)
+        if len(batch) > 0:
+            batch_idx += 1
+            batch_tensor = torch.stack(batch, dim=0)
+            logger.info(f'Saving batch {batch_idx} of {total_batches}')
+            file_name = self.graph_dataset_dir / f'batch_{batch_idx}.pt'
+            torch.save(batch_tensor, file_name)
 
+            del batch
+            self.model.reset_activations()
+            torch.cuda.empty_cache()
+
+    def get_data(self, idx: int=0) -> Data:
+
+        assert self.data_loader # data loader must be initialized before getting gradient features
+        self.model: HookedMNISTClassifier = self.model.to(self.device)
+        self.weight_feature = self.weight_feature.to(self.device)
+
+        self.model.capture_mode(is_on=True)
+        self.model.eval()
+
+
+        for i, (input, target) in enumerate(self.data_loader):
+            if i == idx:
+                input, target = input.to(self.device), target.to(self.device)
+                assert torch.all(target == self.forget_digit)   # sanity check
+                preds = self.model(input)
+                loss: Tensor = self.loss_fn(preds, target)
+                loss.backward()
+
+                in_feature, out_feature = self.flatten_in_out_activation(self.model.activations)
+                gradients: Tensor = self.flatten_and_zero_grad()
+
+                # dim = [num_vertices, num_features]
+                graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
+                
+                # # tracer
+                # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
+                # logger.info(graph_feature_matrix.shape)
+
+                self.model.reset_activations()
+
+                return Data(x=graph_feature_matrix, edge_attr=self.edge_matrix)

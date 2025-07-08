@@ -17,14 +17,13 @@ def generate_graph(checkpoint_path):
 
     dg = GraphGenerator(model=HookedMNISTClassifier(), 
                         checkpoint_path=checkpoint_path)
-    
-    data = dg.get_forward_backward_features()
-    logger.info(data)
+
+    # this saves data in batches
+    dg.save_forward_backward_features()
 
 def main():
     checkpoint_path = train_mnist_classifier()
     generate_graph(checkpoint_path=checkpoint_path)
-
 
 
 if __name__ == "__main__":
