@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Iterator, List, Tuple, Union
 
 import torch
@@ -8,7 +9,6 @@ from torch.utils.hooks import RemovableHandle
 from torch_geometric.nn import GCNConv, MessagePassing
 from torchinfo import summary
 
-from pathlib import Path
 
 @dataclass
 class Activations:

@@ -9,14 +9,12 @@ from loguru import logger
 from torch import Tensor, nn
 from torch.nn.parameter import Parameter
 from torch.utils.data import DataLoader
+from torch_geometric.data import Data
 from torchinfo import summary
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
 from model import Activations, Gradients, HookedMNISTClassifier, Weights
-
-from torch_geometric.data import Data
-
 
 
 class ModelInspector:

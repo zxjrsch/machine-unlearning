@@ -1,8 +1,10 @@
+from pathlib import Path
+
+from loguru import logger
+
 from data import GraphGenerator
 from model import HookedMNISTClassifier
 from trainer import Trainer, TrainerConfig
-from loguru import logger
-from pathlib import Path
 
 
 def train_mnist_classifier():
