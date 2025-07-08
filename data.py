@@ -1,0 +1,269 @@
+
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterator, List, Tuple, Union
+
+import torch
+from loguru import logger
+from torch import Tensor, nn
+from torch.nn.parameter import Parameter
+from torch.utils.data import DataLoader
+from torchinfo import summary
+from torchvision.datasets import MNIST
+from torchvision.transforms import ToTensor
+
+from model import Activations, Gradients, HookedMNISTClassifier, Weights
+
+from torch_geometric.data import Data
+
+
+
+class ModelInspector:
+    def __init__(self, model: nn.Module) -> None:
+        self.model = model 
+
+    def inspect(self):
+        summary(self.model)
+
+    def get_layer_parameters(self) -> Iterator[Parameter]:
+        for _, param in self.model.named_parameters():
+            yield param
+
+    def get_layer_types(self) -> List[Tuple[str, str]]:
+        """
+        Inspect the layers returned by nn.Module.name_parameters()
+        Sample output [('Linear', 'bias')] shows the bias term of a linear layer.
+        """
+        layer_types = []
+        for layer, _ in self.model.named_parameters():
+            module_name = '.'.join(layer.split('.')[:-1])
+            module = self.model.get_submodule(module_name)
+            layer_types.append((module.__class__.__name__, layer.split('.')[-1]))
+        return layer_types
+    
+    def get_layer_signatures(self) -> List[str]:
+        """
+        Inspect layer signature of nn.Module.name_parameters()
+        Sample output: ['Linear(in_features=784, out_features=512, bias=False)']
+        """
+        layer_signature = []
+        for layer, _ in self.model.named_parameters():
+            module_name = '.'.join(layer.split('.')[:-1])
+            module = self.model.get_submodule(module_name)
+            layer_signature.append(module.__repr__())
+        return layer_signature
+    
+    def get_layer_shapes(self) -> List[Tuple[str, torch.Size]]:
+        """
+        Size of the nn.Module.name_parameters() tensors.
+        Sample output: [('weight', torch.Size([512, 784]))]
+        """
+        layer_shapes = []
+        for layer, param in self.model.named_parameters():
+            layer_shapes.append((layer.split('.')[-1], param.shape))
+        return layer_shapes
+    
+    def get_layer_parameter_count(self) -> List[int]:
+        """
+        Named parameter count by layer named_parameters().
+        """
+        layer_parameter_count = []
+        for _, param in self.model.named_parameters():
+            if param.requires_grad:
+                layer_parameter_count.append(param.numel())
+        return layer_parameter_count
+    
+    def count_trainable_parameters(self) -> int:
+        N = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        assert N == sum(self.get_layer_parameter_count())
+        return N
+        
+
+    def get_layer_full_names(self) -> List[str]:
+        """
+        Inspect full name of layers.
+        ['_orig_mod.hidden_layers.hidden layer 1.0.weight']
+        """
+        object_names = []
+        for layer, _ in self.model.named_parameters():
+            object_names.append(layer)
+        return object_names
+    
+    
+class GraphGenerator(ModelInspector):
+    def __init__(self, model: HookedMNISTClassifier, checkpoint_path: Union[Path, None]=None, forget_digit: int = 9, device: str = 'cuda:1'):
+        super().__init__(model)
+
+        if checkpoint_path is not None:
+            self.model = torch.compile(self.model)
+            self.model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
+
+        self.forget_digit = forget_digit
+        self.device = device
+        self.data_loader: DataLoader = self.get_dataloader()
+        self.num_vertices = self.count_trainable_parameters()
+        self.weight_feature = self.get_weight_feature()
+        self.edge_matrix = self.get_edge_matrix()
+        self.loss_fn = nn.CrossEntropyLoss()
+        self.analyze()
+
+    def get_dataloader(self, data_path: str = './datasets'):
+        dataset = MNIST(root=data_path, train=True, transform=ToTensor(), download=True)
+        subset_indices = (dataset.targets == self.forget_digit).nonzero(as_tuple=True)[0]
+        subset = torch.utils.data.Subset(dataset, subset_indices)
+
+        # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1
+        return DataLoader(dataset=subset, batch_size=1)
+
+    def analyze(self) -> None:
+        om =  math.floor(math.log(self.num_vertices, 10))
+        logger.info(f'Graph contains {self.num_vertices} | order magnitude 10^{om} vertices.')
+        om =  math.floor(math.log(self.edge_matrix.shape[1], 10))
+        logger.info(f'Graph contains {self.edge_matrix.shape[1]} | order magnitude 10^{om} edges.')
+
+        weight_feature_dim = self.weight_feature.shape
+        assert weight_feature_dim == torch.Size((self.num_vertices, ))
+
+
+    def get_weight_feature(self) -> Tensor:
+        trainable_layers = [torch.flatten(p) for p in self.model.parameters() if p.requires_grad]
+        return torch.cat(trainable_layers)
+
+    def get_edge_matrix(self) -> List[Tensor]:
+        dims = self.model.dim_array + [self.model.out_dim]
+        assert len(dims) >= 3  # at least a pair of matrices is needed, specified by 3 numbers (a x b) * (b x c)
+        assert sum(dims[i] * dims[i+1] for i in range(len(dims)-1)) == self.num_vertices
+
+        v = torch.arange(start=0, end=self.num_vertices, step=1, dtype=torch.long)
+        c, weight_enumeration_matrices = 0, []
+        for k in range(len(dims)-1):
+            m, n = dims[k+1], dims[k]
+            enumeration_matrix = v[c: c+m*n].unflatten(dim=0, sizes=(m, n))
+            weight_enumeration_matrices.append(enumeration_matrix)
+            c += m*n
+
+        edge_matrices_list = []
+        for j in range(len(weight_enumeration_matrices)-1):
+            A = weight_enumeration_matrices[j+1]
+            B = weight_enumeration_matrices[j]
+
+            assert A.shape[1] == B.shape[0]
+            p, q, r = A.shape[0], A.shape[1], B.shape[1]
+            for activation_idx in range(q):
+
+                # cross I.O. edges
+                forward_edges = torch.cartesian_prod(A[:, activation_idx], B[activation_idx, :]).T
+                edge_matrices_list.append(forward_edges)
+                del forward_edges
+
+                backward_edges = torch.cartesian_prod(B[activation_idx, :], A[:, activation_idx]).T
+                edge_matrices_list.append(backward_edges)
+                del backward_edges
+
+                # In edges 
+                I_edges = torch.cartesian_prod(B[activation_idx, :], B[activation_idx, :])
+                masks = I_edges[:, 0] == I_edges[:, 1]
+                I_edges = I_edges[~masks]
+                edge_matrices_list.append(I_edges.T)
+                del I_edges, masks
+
+                # Out edges 
+                O_edges = torch.cartesian_prod(A[:, activation_idx], A[:, activation_idx])
+                masks = O_edges[:, 0] == O_edges[:, 1]
+                O_edges = O_edges[~masks]
+                edge_matrices_list.append(O_edges.T)
+                del O_edges, masks
+
+        # edge case 
+        # final layer (the classifier) has only edges of In-type
+        B: Tensor = weight_enumeration_matrices[-1]
+        q, r = B.shape[0], B.shape[1]
+        for activation_idx in range(q):
+            I_edges = torch.cartesian_prod(B[activation_idx, :], B[activation_idx, :])
+            masks = I_edges[:, 0] == I_edges[:, 1]
+            I_edges = I_edges[~masks]
+            edge_matrices_list.append(I_edges.T)
+            del I_edges, masks
+
+        return torch.cat(edge_matrices_list, dim=1)
+                
+    
+    def flatten_and_zero_grad(self) -> Tensor:
+        gradients = []
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                g = param.grad 
+                assert g is not None
+                gradients.append(torch.flatten(g))
+                param.grad = None
+        gradients =  torch.cat(gradients)
+        assert gradients.numel() == self.num_vertices
+        return gradients
+
+    def flatten_in_out_activation(self, activations: List[Activations]) -> Tuple[Tensor, Tensor]:
+        dims = self.model.dim_array + [self.model.out_dim]
+
+        in_activation_features = []
+        out_activation_features = []
+        
+        for j in range(len(activations)):
+            m, n = dims[j], dims[j+1]
+
+            # indexing specific to HookedMNISTClassifier models
+            input_activation = activations[j].input_activation[0].squeeze()
+            output_activation = activations[j].output_activation[0].squeeze()
+            
+            assert input_activation.shape[0] == m
+            assert output_activation.shape[0] == n
+
+            in_feature = input_activation.expand(n, -1)
+            out_feature = output_activation.unsqueeze(1).expand(-1, m)
+
+            assert in_feature.shape == torch.Size((n, m))
+            assert out_feature.shape == torch.Size((n, m))
+
+            in_activation_features.append(in_feature.flatten())
+            out_activation_features.append(out_feature.flatten())
+        
+        in_features_vector = torch.cat(in_activation_features)
+        out_features_vector = torch.cat(out_activation_features)
+
+        # # tracer
+        # logger.info(f'{in_feature.flatten().shape} | {out_feature.flatten().shape} | {m*n}')
+        # logger.info(f'{in_features_vector.shape}')
+        # logger.info(f'{out_features_vector.shape}')
+
+        return in_features_vector, out_features_vector
+
+    def get_forward_backward_features(self) -> None:
+        # saves grads and activations 
+
+        assert self.data_loader # data loader must be initialized before getting gradient features
+        self.model: HookedMNISTClassifier = self.model.to(self.device)
+        self.weight_feature = self.weight_feature.to(self.device)
+
+        self.model.capture_mode(is_on=True)
+        self.model.eval()
+        for i, (input, target) in enumerate(self.data_loader):
+            input, target = input.to(self.device), target.to(self.device)
+            assert torch.all(target == self.forget_digit)   # sanity check
+            preds = self.model(input)
+            loss: Tensor = self.loss_fn(preds, target)
+            loss.backward()
+
+            in_feature, out_feature = self.flatten_in_out_activation(self.model.activations)
+            gradients: Tensor = self.flatten_and_zero_grad()
+
+            # dim = [num_vertices, num_features]
+            graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
+
+            # # tracer
+            # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
+            # logger.info(graph_feature_matrix.shape)
+
+            self.model.reset_activations()
+
+            # turn this into batch processing
+            return Data(x=graph_feature_matrix, edge_attr=self.edge_matrix)
+
