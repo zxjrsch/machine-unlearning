@@ -34,14 +34,12 @@ def train_gcn(src_checkpoint):
     trainer.train()
 
     # test masking
-    # current_model_dim = 365184
-    # trainer.mask_model(mask=torch.rand(current_model_dim))
+    current_model_dim = 8192
+    trainer.mask_single_layer(mask=torch.rand(current_model_dim))
 
     # data_loader = GraphDataLoader()
     # for i in range(5):
     #     data_loader.next()
-
-
 
 def main():
     checkpoint_path = train_mnist_classifier()

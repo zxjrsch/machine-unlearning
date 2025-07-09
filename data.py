@@ -151,7 +151,7 @@ class GraphGenerator(ModelInspector):
             try:
                 [p for p in self.model.parameters() if p.requires_grad][mask_layer]
             except Exception:
-                logger.info(f'Layer {self.mask_layer} is invalid.')
+                logger.info(f'Layer {mask_layer} is invalid.')
                 exit()
         return mask_layer
 
@@ -337,9 +337,6 @@ class GraphGenerator(ModelInspector):
         # logger.info(f'{in_feature.flatten().shape}, {out_feature.flatten().shape}')
 
         return in_feature.flatten(), out_feature.flatten()
-
-
-
 
     def flatten_in_out_activation_full_model(self, activations: List[Activations]) -> Tuple[Tensor, Tensor]:
         dims = self.model.dim_array + [self.model.out_dim]

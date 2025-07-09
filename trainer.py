@@ -1,3 +1,4 @@
+import copy
 import glob
 import os
 from dataclasses import dataclass
@@ -128,6 +129,7 @@ class GCNTrainerConfig:
     lr=0.01
     weight_decay=5e-4
     steps=3
+    mask_layer: Union[None, int] = -2
 
 class GraphDataLoader:
     def __init__(self, graph_data_dir: Path = Path('datasets/Graphs')):
@@ -158,6 +160,7 @@ class GCNTrainer:
     def __init__(self, config: GCNTrainerConfig) -> None:
         self.config = config
         self.src_model: HookedMNISTClassifier = self.load_src_model()
+        self.mask_layer = self.validate_layer(config.mask_layer)
         self.weight_vector = self.vectorize_model()
         self.src_model_layer_dims = self.get_model_signature()
         self.src_model_layer_shapes = self.src_model.dim_array + [self.src_model.out_dim]
@@ -172,14 +175,28 @@ class GCNTrainer:
         model.load_state_dict(torch.load(self.config.src_checkpoint, weights_only=True))
         return model
 
+    def validate_layer(self, mask_layer) -> Union[None, int]:
+        if mask_layer is not None:
+            try:
+                [p for p in self.src_model.parameters() if p.requires_grad][mask_layer]
+            except Exception:
+                logger.info(f'Layer {mask_layer} is invalid.')
+                exit()
+        return mask_layer
+
     def vectorize_model(self) -> Tensor:
         trainable_layers = [torch.flatten(p) for p in self.src_model.parameters() if p.requires_grad]
-        return torch.cat(trainable_layers)
+        if self.mask_layer is None:
+            return torch.cat(trainable_layers)
+        return trainable_layers[self.mask_layer]
 
     def get_model_signature(self) -> List[int]:
-        return [p.numel() for p in self.src_model.parameters() if p.requires_grad]
-
-    def mask_model(self, mask: Tensor) -> nn.Module:
+        counts = [p.numel() for p in self.src_model.parameters() if p.requires_grad]
+        if self.mask_layer is None:
+            return counts
+        return [counts[self.mask_layer]]
+    
+    def mask_full_model(self, mask: Tensor) -> nn.Module:
         # assumes HookedMNISTClassifier used so parameters are matrices
         model_vect = torch.mul(mask, self.weight_vector)
 
@@ -193,7 +210,7 @@ class GCNTrainer:
             layers.append(layer_vect.unflatten(dim=0, sizes=(m, n)))
             i = j
 
-        state_dict = self.src_model.state_dict()
+        state_dict = copy.deepcopy(self.src_model.state_dict())
         i = 0
         for key in state_dict.keys():
             state_dict[key] = layers[i]
@@ -201,6 +218,20 @@ class GCNTrainer:
 
         model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
         return model.load_state_dict(state_dict)
+    
+    def mask_single_layer(self, mask: Tensor) -> HookedMNISTClassifier:
+        layer_vect = torch.mul(mask, self.weight_vector)
+        assert layer_vect.shape[0] == self.src_model_layer_dims[0]
+        m,n = [p for p in self.src_model.parameters() if p.requires_grad][self.mask_layer].shape
+        layer_matrix = layer_vect.unflatten(dim=0, sizes=(m,n))
+
+        state_dict = copy.deepcopy(self.src_model.state_dict())
+        key = list(state_dict.keys())[self.mask_layer]
+        state_dict[key] = layer_matrix
+
+        model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
+        return model.load_state_dict(state_dict)
+
 
     def train(self) -> None:
         adam_optimizer = torch.optim.Adam(self.gcn.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
