@@ -215,7 +215,8 @@ class GCNTrainer:
 
             edge_matrix = edge_matrix.to(self.device)
 
-            preds = self.gcn(x=feature_batch, edge_index=edge_matrix)
+            logger.info(f'Batch {feature_batch.shape} | Edge {edge_matrix.shape} | Input {input_batch.shape} | Target {target_batch.shape}')
+            preds: Tensor = self.gcn(x=feature_batch, edge_index=edge_matrix)
 
             # train_loss: Tensor = None
             # train_loss.backward()

@@ -101,8 +101,10 @@ class GraphGenerator(ModelInspector):
                 graph_dataset_dir: Path = Path('./datasets/Graphs'),
                 process_save_batch_size: int = 2,
                 forget_digit: int = 9, 
-                device: str = 'cuda:1'
+                device: str = 'cuda:1',
+                mask_layer: Union[int, None] = -2   # specify one layer to mask, if None then all layers selected
     ) -> None:
+    
         
         super().__init__(model)
 
@@ -113,6 +115,7 @@ class GraphGenerator(ModelInspector):
 
         graph_dataset_dir.mkdir(exist_ok=True)
         self.graph_dataset_dir = graph_dataset_dir
+        self.mask_layer = self.validate_layer(mask_layer)
 
         self._save_redundant_features = True
 
@@ -120,8 +123,8 @@ class GraphGenerator(ModelInspector):
         self.process_save_batch_size = process_save_batch_size
         self.device = device
         self.data_loader: DataLoader = self.get_dataloader()
-        self.num_vertices = self.count_trainable_parameters()
-        self.weight_feature = self.get_weight_feature()
+        self.num_vertices = self.get_num_vertices()
+        self.weight_feature = self.get_weight_feature() 
         self.edge_matrix = self.get_edge_matrix()
         self.loss_fn = nn.CrossEntropyLoss()
         self.analyze()
@@ -143,18 +146,80 @@ class GraphGenerator(ModelInspector):
         weight_feature_dim = self.weight_feature.shape
         assert weight_feature_dim == torch.Size((self.num_vertices, ))
 
+    def validate_layer(self, mask_layer) -> Union[None, int]:
+        if mask_layer is not None:
+            try:
+                [p for p in self.model.parameters() if p.requires_grad][mask_layer]
+            except Exception:
+                logger.info(f'Layer {self.mask_layer} is invalid.')
+                exit()
+        return mask_layer
+
+    def get_num_vertices(self):
+        if self.mask_layer is None:
+            return self.count_trainable_parameters()
+        return self.get_layer_parameter_count()[self.mask_layer]
+
+
     def get_weight_feature(self, save: bool=False) -> Tensor:
+
         trainable_layers = [torch.flatten(p) for p in self.model.parameters() if p.requires_grad]
-        flattened_model_weights = torch.cat(trainable_layers)
+
+        if self.mask_layer is None:
+            # get all layers
+            flattened_weights = torch.cat(trainable_layers)
+        else:
+            # single layer
+            flattened_weights = trainable_layers[self.mask_layer]
 
         if save:
             file_name: Path = self.graph_dataset_dir / 'flattened_model_weights.pt'
-            torch.save(flattened_model_weights, file_name)
+            torch.save(flattened_weights, file_name)
             logger.info(f'Weights saved at {file_name}')
         
-        return flattened_model_weights
+        return flattened_weights
+    
+    def get_edge_matrix(self) -> Tensor:
+        
+        if self.mask_layer is None:
+            return self.get_edge_matrix_full_model()
+        
+        return self.get_edge_matrix_by_layer()
+    
+    def get_edge_matrix_by_layer(self) -> Tensor:
 
-    def get_edge_matrix(self) -> List[Tensor]:
+        # assume layer is matrix, as in our experiments
+        layer = [p for p in self.model.parameters() if p.requires_grad][self.mask_layer]
+        m, n = layer.shape
+        enumeration_matrx = torch.arange(start=0, end=m*n, step=1, dtype=torch.long).unflatten(dim=0, sizes=(m, n))
+
+        edge_matrix_list = []
+
+        for c in range(n):
+            col = enumeration_matrx[:, c]
+            O_edges = torch.cartesian_prod(col, col)    # out edges emanate out of an activation 
+            masks = O_edges[:, 0] == O_edges[:, 1]
+            O_edges = O_edges[~masks]
+            edge_matrix_list.append(O_edges.T)
+
+        for r in range(m):
+            row = enumeration_matrx[r, :]
+            I_edges = torch.cartesian_prod(row, row)
+            masks = I_edges[:, 0] == I_edges[:, 1]
+            I_edges = I_edges[~masks]
+            edge_matrix_list.append(I_edges.T)
+
+        edge_matrix = torch.cat(edge_matrix_list, dim=1)
+
+        if self._save_redundant_features:
+            file_name: Path = self.graph_dataset_dir / 'graph_edge_matrix.pt'
+            torch.save(edge_matrix, file_name)
+            logger.info(f'Edge matrix saved at {file_name}')
+
+        return edge_matrix
+
+
+    def get_edge_matrix_full_model(self) -> Tensor:
         dims = self.model.dim_array + [self.model.out_dim]
         assert len(dims) >= 3  # at least a pair of matrices is needed, specified by 3 numbers (a x b) * (b x c)
         assert sum(dims[i] * dims[i+1] for i in range(len(dims)-1)) == self.num_vertices
@@ -221,7 +286,7 @@ class GraphGenerator(ModelInspector):
         if self._save_redundant_features:
             file_name: Path = self.graph_dataset_dir / 'graph_edge_matrix.pt'
             torch.save(edge_matrix, file_name)
-            logger.info(f'Weights saved at {file_name}')
+            logger.info(f'Edge matrix saved at {file_name}')
 
         return edge_matrix
                 
@@ -233,11 +298,50 @@ class GraphGenerator(ModelInspector):
                 assert g is not None
                 gradients.append(torch.flatten(g))
                 param.grad = None
-        gradients =  torch.cat(gradients)
+        if self.mask_layer is not None:
+            # get grad for layer 
+            gradients = gradients[self.mask_layer]
+        else:
+            # get grad for entire model
+            gradients =  torch.cat(gradients)
         assert gradients.numel() == self.num_vertices
         return gradients
-
+    
     def flatten_in_out_activation(self, activations: List[Activations]) -> Tuple[Tensor, Tensor]:
+        """Due to the need for per-sample gradient, this function currently only support single data batches."""
+        if self.mask_layer is None:
+            return self.flatten_in_out_activation_full_model(activations)
+        
+        return self.flatten_in_out_activation_single_layer(activations)
+    
+    def flatten_in_out_activation_single_layer(self, activations: List[Activations]) -> Tuple[Tensor, Tensor]:
+
+        # layers weights are matrices in our experiments
+        m, n = [p for p in self.model.parameters() if p.requires_grad][self.mask_layer].shape
+        activation: Activations = activations[self.mask_layer]
+        in_activation, out_activation = activation.input_activation[0].squeeze(), activation.output_activation[0].squeeze()
+
+        assert in_activation.shape[-1] == n
+        assert out_activation.shape[-1] == m
+
+        in_feature = in_activation.expand(m, -1)
+        out_feature = out_activation.unsqueeze(1).expand(-1, n)
+
+        # # sanity check 
+        # logger.info(f'{in_feature.shape} | {out_feature.shape} | {m} x {n}')
+
+        assert in_feature.shape == torch.Size((m, n))
+        assert out_feature.shape == torch.Size((m, n))
+
+        # # sanity check 
+        # logger.info(f'{in_feature.flatten().shape}, {out_feature.flatten().shape}')
+
+        return in_feature.flatten(), out_feature.flatten()
+
+
+
+
+    def flatten_in_out_activation_full_model(self, activations: List[Activations]) -> Tuple[Tensor, Tensor]:
         dims = self.model.dim_array + [self.model.out_dim]
 
         in_activation_features = []
@@ -315,8 +419,8 @@ class GraphGenerator(ModelInspector):
 
                 gcn_batch = GCNBatch(
                     feature_batch = torch.stack(feature_batch, dim=0),
-                    input_batch = torch.stack(input_batch, dim=0),
-                    target_batch = torch.stack(target_batch, dim=0)
+                    input_batch = torch.stack(input_batch, dim=0).squeeze(),
+                    target_batch = torch.stack(target_batch, dim=0).squeeze()
                 )
 
                 logger.info(f'Saving batch {batch_idx} of {total_batches}')
@@ -336,8 +440,8 @@ class GraphGenerator(ModelInspector):
             batch_idx += 1
             gcn_batch = GCNBatch(
                 feature_batch = torch.stack(feature_batch, dim=0),
-                input_batch = torch.stack(input_batch, dim=0),
-                target_batch = torch.stack(target_batch, dim=0)
+                input_batch = torch.stack(input_batch, dim=0).squeeze(),
+                target_batch = torch.stack(target_batch, dim=0).squeeze()
             )
             logger.info(f'Saving batch {batch_idx} of {total_batches}')
             file_name = self.graph_dataset_dir / f'batch_{batch_idx}.pt'
