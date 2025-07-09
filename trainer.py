@@ -1,16 +1,19 @@
+import glob
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Type, Union
+from typing import List, Tuple, Type, Union
 
 import torch
 from loguru import logger
-from torch import nn
+from torch import Tensor, nn
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
-from model import HookedMNISTClassifier
+from data import GCNBatch, GraphGenerator
+from model import HookedMNISTClassifier, MaskingGCN
 
 
 @dataclass
@@ -54,7 +57,7 @@ class Trainer:
         return val_loader
 
     
-    def train(self, device='cuda:1') -> Path:
+    def train(self, device='cuda:1', step_limit: Union[int, None]=3) -> Path:
         """Returns checkpoint path."""
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
 
@@ -62,7 +65,10 @@ class Trainer:
 
             self.model.train()
             self.model = self.model.to(device)
-            for j, (input, target) in enumerate(self.train_data):
+            enumerator = list(enumerate(self.train_data))
+            if step_limit is not None:
+                enumerator = enumerator[:step_limit]
+            for j, (input, target) in enumerator:
                 input = input.to(device)
                 target = target.to(device)
 
@@ -115,3 +121,113 @@ class Trainer:
         checkpoint_path = d / file_name
         torch.save(self.model.state_dict(), checkpoint_path)
         return checkpoint_path
+    
+@dataclass
+class GCNTrainerConfig:
+    src_checkpoint: Path 
+    lr=0.01
+    weight_decay=5e-4
+    steps=3
+
+class GraphDataLoader:
+    def __init__(self, graph_data_dir: Path = Path('datasets/Graphs')):
+        self.graph_data_dir = graph_data_dir
+        self.edge_matrix = self.load_edge_matrix()
+        self.batch_paths = sorted(glob.glob(os.path.join(self.graph_data_dir, 'batch_*.pt')))
+        self.next_batch_path = 0
+
+    def load_edge_matrix(self) -> Tensor:
+        file_path = self.graph_data_dir / 'graph_edge_matrix.pt'
+        return torch.load(file_path)
+    
+    def load_weight_feature(self) -> Tensor:
+        file_path = self.graph_data_dir / 'flattened_model_weights.pt'
+        return torch.load(file_path)
+
+    def next(self) -> Tuple[GCNBatch, Tensor]:
+        """Returns batched feature tensor, and edge matrix."""
+        i = self.next_batch_path % len(self.batch_paths)
+        file_path = self.batch_paths[i]
+        gcn_batch = torch.load(file_path, weights_only=False)
+        logger.info(f'Getting batch {self.next_batch_path} === {i} mod {len(self.batch_paths)}')
+        self.next_batch_path += 1
+        return gcn_batch, self.edge_matrix
+
+class GCNTrainer:
+
+    def __init__(self, config: GCNTrainerConfig) -> None:
+        self.config = config
+        self.src_model: HookedMNISTClassifier = self.load_src_model()
+        self.weight_vector = self.vectorize_model()
+        self.src_model_layer_dims = self.get_model_signature()
+        self.src_model_layer_shapes = self.src_model.dim_array + [self.src_model.out_dim]
+        self.src_model_dim = self.weight_vector.numel()
+        self.gcn = MaskingGCN()
+        self.graph_data_loader = GraphDataLoader()
+        self.device = 'cuda:1'
+    
+    def load_src_model(self) -> nn.Module:
+        model: HookedMNISTClassifier = HookedMNISTClassifier()
+        model = torch.compile(model)
+        model.load_state_dict(torch.load(self.config.src_checkpoint, weights_only=True))
+        return model
+
+    def vectorize_model(self) -> Tensor:
+        trainable_layers = [torch.flatten(p) for p in self.src_model.parameters() if p.requires_grad]
+        return torch.cat(trainable_layers)
+
+    def get_model_signature(self) -> List[int]:
+        return [p.numel() for p in self.src_model.parameters() if p.requires_grad]
+
+    def mask_model(self, mask: Tensor) -> nn.Module:
+        # assumes HookedMNISTClassifier used so parameters are matrices
+        model_vect = torch.mul(mask, self.weight_vector)
+
+        i, layers = 0, []
+        for k in range(len(self.src_model_layer_dims)):
+            n, m = self.src_model_layer_shapes[k:k+2]
+            assert m*n == self.src_model_layer_dims[k]
+            j = i + self.src_model_layer_dims[k]
+            layer_vect = model_vect[i: j]
+            # logger.info(f'{layer_vect.shape}, {m} x {n} = {m*n}')
+            layers.append(layer_vect.unflatten(dim=0, sizes=(m, n)))
+            i = j
+
+        state_dict = self.src_model.state_dict()
+        i = 0
+        for key in state_dict.keys():
+            state_dict[key] = layers[i]
+            i += 1
+
+        model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
+        return model.load_state_dict(state_dict)
+
+    def train(self) -> None:
+        adam_optimizer = torch.optim.Adam(self.gcn.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
+        self.gcn = self.gcn.to(self.device)
+        self.gcn.train()
+
+        for s in range(self.config.steps):
+            gcn_batch, edge_matrix = self.graph_data_loader.next()
+            feature_batch = gcn_batch.feature_batch.to(self.device)
+            input_batch = gcn_batch.input_batch.to(self.device)
+            target_batch = gcn_batch.target_batch.to(self.device)
+
+            edge_matrix = edge_matrix.to(self.device)
+
+            preds = self.gcn(x=feature_batch, edge_index=edge_matrix)
+
+            # train_loss: Tensor = None
+            # train_loss.backward()
+            # adam_optimizer.step()
+            # adam_optimizer.zero_grad()
+
+            # logger.info(f'Step {s} | loss {train_loss.item()}')
+
+            # sanity check 
+            logger.info(preds.shape)
+            logger.info(torch.sum(preds, dim=1).detach())
+        logger.info('Training complete.')
+
+    def loss_fn(self):
+        pass

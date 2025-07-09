@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Callable, Iterator, List, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.nn.parameter import Parameter
 from torch.utils.hooks import RemovableHandle
@@ -32,7 +33,7 @@ class HookedMNISTClassifier(nn.Module):
             mnist_classes: int = 10,
             mnist_dim: int = 28*28,
             include_bias: bool = False,
-            hidden_dims: List[int] = [256, 512, 64],
+            hidden_dims: List[int] = [128, 64],
     ) -> None:
         
         assert len(hidden_dims) > 0 # requires at least one hidden layer 
@@ -129,19 +130,24 @@ class HookedMNISTClassifier(nn.Module):
         for handle in self.hook_handles_gradients:
             handle.remove()
 
+    def refresh(self) -> None:
+        self.destroy_hooks_activation()
+        self.destroy_hooks_weight()
+        self.destroy_hooks_gradients
+        
+        self.activations = []
+        self.weights = []
+        self.gradients = []
+
+
     def capture_mode(self, is_on: bool = True) -> None:
         if is_on:
+            self.refresh()
             self.register_hooks_activation()
             # self.register_hooks_weight()
             self.register_hooks_gradient()
         else:
-            self.destroy_hooks_activation()
-            self.destroy_hooks_weight()
-            self.destroy_hooks_gradients
-            
-            self.activations = []
-            self.weights = []
-            self.gradients = []
+            self.refresh()
 
 
     def reset_activations(self) -> None:
@@ -157,7 +163,6 @@ class MaskingGCNConv(MessagePassing):
 
         self.A = nn.Linear(in_channels, out_channels, bias=False) 
         self.B = nn.Linear(in_channels, out_channels, bias=False) 
-        self.softmax = nn.Softmax()
 
     def forward(self, x, edge_index):
        
@@ -165,8 +170,7 @@ class MaskingGCNConv(MessagePassing):
        avg_msg = self.propagate(edge_index=edge_index, x=x)
 
        # linear projection
-       x = self.A(avg_msg) + self.B(x)
-       return self.softmax(x)
+       return self.A(avg_msg) + self.B(x)
 
     def message(self, x_j):
         return x_j
@@ -174,7 +178,7 @@ class MaskingGCNConv(MessagePassing):
 
 class MaskingGCN(nn.Module):
 
-    def __init__(self, num_node_features=4, num_message_passing_rounds=17, hidden_dim=32, use_deg_avg=False):
+    def __init__(self, num_node_features=4, num_message_passing_rounds=3, hidden_dim=32, use_deg_avg=False):
         """
         Current node features:
             1) weight
@@ -184,7 +188,7 @@ class MaskingGCN(nn.Module):
 
         GCN Message Passing Rounds: 
             Recommended value is (# layers in masked network - 1) to ensure full receptive field. 
-            Default arg is 17 for initial ResNet-18 experiments.
+            For example 17 is recommended for ResNet-18 experiments.
 
         use_deg_avg
             Uses PyG default GCNCov instead of custom defined MaskingGCNConv
@@ -207,13 +211,13 @@ class MaskingGCN(nn.Module):
             })
 
         self.proj_out = nn.Linear(hidden_dim, 1)
-        self.softmax = nn.Softmax(dim=0)
+        self.softmax = nn.Softmax(dim=1)
             
     def forward(self, x, edge_index):
 
         x = self.proj_in(x, edge_index)
         for conv_layer in self.conv.values():
-            x = self.softmax(conv_layer(x, edge_index))
+            x = F.softmax(conv_layer(x, edge_index), dim=1)
     
-        return self.softmax(self.proj_out(x))
+        return F.softmax(self.proj_out(x), dim=1).squeeze(-1)
     

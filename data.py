@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Tuple, Union, Any
+from typing import Any, Iterator, List, Tuple, Union
 
 import torch
 from loguru import logger
@@ -86,14 +86,20 @@ class ModelInspector:
         for layer, _ in self.model.named_parameters():
             object_names.append(layer)
         return object_names
-    
+
+@dataclass
+class GCNBatch:
+    feature_batch: Tensor
+    input_batch: Tensor
+    target_batch: Tensor    
+
     
 class GraphGenerator(ModelInspector):
     def __init__(self, 
                 model: HookedMNISTClassifier, 
                 checkpoint_path: Union[Path, None]=None, 
                 graph_dataset_dir: Path = Path('./datasets/Graphs'),
-                process_save_batch_size: int = 64,
+                process_save_batch_size: int = 2,
                 forget_digit: int = 9, 
                 device: str = 'cuda:1'
     ) -> None:
@@ -137,11 +143,11 @@ class GraphGenerator(ModelInspector):
         weight_feature_dim = self.weight_feature.shape
         assert weight_feature_dim == torch.Size((self.num_vertices, ))
 
-    def get_weight_feature(self) -> Tensor:
+    def get_weight_feature(self, save: bool=False) -> Tensor:
         trainable_layers = [torch.flatten(p) for p in self.model.parameters() if p.requires_grad]
         flattened_model_weights = torch.cat(trainable_layers)
 
-        if self._save_redundant_features:
+        if save:
             file_name: Path = self.graph_dataset_dir / 'flattened_model_weights.pt'
             torch.save(flattened_model_weights, file_name)
             logger.info(f'Weights saved at {file_name}')
@@ -280,8 +286,11 @@ class GraphGenerator(ModelInspector):
         if limit is not None:
             eumerator = eumerator[:limit]
 
-        batch, batch_idx, total_batches = [], 0, math.ceil(len(eumerator) / self.process_save_batch_size)
+        feature_batch, batch_idx, total_batches = [], 0, math.ceil(len(eumerator) / self.process_save_batch_size)
+        input_batch, target_batch = [], []
         for i, (input, target) in eumerator:
+            input_batch.append(input)
+            target_batch.append(target)
             input, target = input.to(self.device), target.to(self.device)
             assert torch.all(target == self.forget_digit)   # sanity check
             preds = self.model(input)
@@ -291,35 +300,50 @@ class GraphGenerator(ModelInspector):
             in_feature, out_feature = self.flatten_in_out_activation(self.model.activations)
             gradients: Tensor = self.flatten_and_zero_grad()
 
-            # dim = [num_vertices, num_features]
+            # dim = [num_vertices, num_features-1] 
+            # weight feature is shared thus stored separately
             graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
             
             # # tracer
             # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
             # logger.info(graph_feature_matrix.shape)
 
-            batch.append(graph_feature_matrix)
+            feature_batch.append(graph_feature_matrix)
 
-            if len(batch) == self.process_save_batch_size:
+            if len(feature_batch) == self.process_save_batch_size:
                 batch_idx += 1
-                batch_tensor = torch.stack(batch, dim=0)
+
+                gcn_batch = GCNBatch(
+                    feature_batch = torch.stack(feature_batch, dim=0),
+                    input_batch = torch.stack(input_batch, dim=0),
+                    target_batch = torch.stack(target_batch, dim=0)
+                )
+
                 logger.info(f'Saving batch {batch_idx} of {total_batches}')
                 file_name = self.graph_dataset_dir / f'batch_{batch_idx}.pt'
-                torch.save(batch_tensor, file_name)
-                batch = []
+
+        
+                torch.save(gcn_batch, file_name)
+                feature_batch = []
+                input_batch = []
+                target_batch = []
                 torch.cuda.empty_cache()
 
             self.model.reset_activations()
             torch.cuda.empty_cache()
 
-        if len(batch) > 0:
+        if len(feature_batch) > 0:
             batch_idx += 1
-            batch_tensor = torch.stack(batch, dim=0)
+            gcn_batch = GCNBatch(
+                feature_batch = torch.stack(feature_batch, dim=0),
+                input_batch = torch.stack(input_batch, dim=0),
+                target_batch = torch.stack(target_batch, dim=0)
+            )
             logger.info(f'Saving batch {batch_idx} of {total_batches}')
             file_name = self.graph_dataset_dir / f'batch_{batch_idx}.pt'
-            torch.save(batch_tensor, file_name)
+            torch.save(gcn_batch, file_name)
 
-            del batch
+            del feature_batch, input_batch, target_batch
             self.model.reset_activations()
             torch.cuda.empty_cache()
 
@@ -352,5 +376,6 @@ class GraphGenerator(ModelInspector):
                 # logger.info(graph_feature_matrix.shape)
 
                 self.model.reset_activations()
+                torch.cuda.empty_cache()
 
                 return Data(x=graph_feature_matrix, edge_attr=self.edge_matrix)
