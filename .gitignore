@@ -11,4 +11,5 @@ wheels/
 
 datasets/
 checkpoints/
+eval/
 uv.lock

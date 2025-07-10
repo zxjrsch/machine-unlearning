@@ -165,7 +165,7 @@ class GraphDataLoader:
         i = self.next_batch_path % len(self.batch_paths)
         file_path = self.batch_paths[i]
         gcn_batch = torch.load(file_path, weights_only=False)
-        logger.info(f'Getting batch {self.next_batch_path} === {i} mod {len(self.batch_paths)}')
+        # logger.info(f'Getting batch {self.next_batch_path} === {i} mod {len(self.batch_paths)}')
         self.next_batch_path += 1
         return gcn_batch, self.edge_matrix
 
@@ -285,6 +285,7 @@ class GCNTrainer:
             edge_matrix = edge_matrix.to(self.device)
 
             batch_size = feature_batch.shape[0]
+            logger.info(f'GCN training batch size: {batch_size}')
 
             # logger.info(f'Batch {feature_batch.shape} | Edge {edge_matrix.shape} | Input {input_batch.shape} | Target {target_batch.shape}')
 

@@ -135,6 +135,18 @@ class GraphGenerator(ModelInspector):
         # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1 for feature extraction
         return DataLoader(dataset=dataset, batch_size=1)
 
+    def reset_forget_digit(self, digit: Union[int, None], data_path='./datasets') -> DataLoader:
+        if digit is None:
+            self.forget_digit = None
+            self.data_loader = self.get_dataloader(data_path=data_path)
+        else:
+            assert 0 <= digit <= 9
+            self.forget_digit = digit
+            self.data_loader = self.get_single_class_dataloader(data_path=data_path)
+
+        logger.info(f'Resetting graph generator dataloader to digit: {digit}')
+        return self.data_loader
+
 
     def get_single_class_dataloader(self, data_path: str = './datasets') -> DataLoader:
         dataset = MNIST(root=data_path, train=True, transform=ToTensor(), download=True)
@@ -455,7 +467,8 @@ class GraphGenerator(ModelInspector):
             self.model.reset_activations()
             torch.cuda.empty_cache()
 
-    def get_data(self, idx: int=0) -> Data:
+    def get_data(self, idx: int=0) -> Tuple[Any, Any, Data]:
+        """Generate target and PyG graph data"""
 
         assert self.data_loader # data loader must be initialized before getting gradient features
         self.model: HookedMNISTClassifier = self.model.to(self.device)
@@ -486,4 +499,4 @@ class GraphGenerator(ModelInspector):
                 self.model.reset_activations()
                 torch.cuda.empty_cache()
 
-                return Data(x=graph_feature_matrix, edge_attr=self.edge_matrix)
+                return input, target, Data(x=graph_feature_matrix, edge_index=self.edge_matrix)
