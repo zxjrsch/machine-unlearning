@@ -1,10 +1,11 @@
 import copy
 import glob
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Type, Union
+from typing import List, NewType, Tuple, Type, Union
 
 import torch
 import torch.nn.functional as F
@@ -23,7 +24,7 @@ from model import HookedMNISTClassifier, MaskingGCN
 class TrainerConfig:
     architecture: Type[nn.Module] = HookedMNISTClassifier
     batch_size: int = 256
-    checkpoint_dir: Union[Path, str] = Path('./checkpoints')
+    checkpoint_dir: Union[Path, str] = Path('./checkpoints/mnist_classifier')
     data_path: Union[Path, str] = Path('./datasets')
     model_name: str = 'mnist_classifier'
     epochs: int = 1
@@ -60,7 +61,7 @@ class Trainer:
         return val_loader
 
     
-    def train(self, device='cuda:1', step_limit: Union[int, None]=3) -> Path:
+    def train(self, device='cuda:1', step_limit: Union[int, None]=None) -> Path:
         """Returns checkpoint path."""
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
 
@@ -124,15 +125,25 @@ class Trainer:
         checkpoint_path = d / file_name
         torch.save(self.model.state_dict(), checkpoint_path)
         return checkpoint_path
-    
+
+class Percentage:
+    def __init__(self, p):
+        self.dec_value = self.convert_to_decimal(p)
+
+    def convert_to_decimal(self, p) -> float:
+        assert isinstance(p, float) or isinstance(p, int)
+        assert 0 <= p <= 100
+        return p / 100
+
 @dataclass
 class GCNTrainerConfig:
     src_checkpoint: Path 
+    gcn_checkpoint_path: Path = Path('checkpoints/gcn')
     lr=0.01
     weight_decay=5e-4
-    steps=3
+    steps=32
     mask_layer: Union[None, int] = -2
-    num_masks_K: Union[int, float] = 2_500
+    mask_K: Union[int, Percentage] = 2_500 # number of parameters to keep or some Percentage of the model/layer 
 
 class GraphDataLoader:
     def __init__(self, graph_data_dir: Path = Path('datasets/Graphs')):
@@ -140,7 +151,7 @@ class GraphDataLoader:
         self.edge_matrix = self.load_edge_matrix()
         self.batch_paths = sorted(glob.glob(os.path.join(self.graph_data_dir, 'batch_*.pt')))
         self.next_batch_path = 0
-
+        
     def load_edge_matrix(self) -> Tensor:
         file_path = self.graph_data_dir / 'graph_edge_matrix.pt'
         return torch.load(file_path)
@@ -167,11 +178,17 @@ class GCNTrainer:
         self.weight_vector = self.vectorize_model()
         self.src_model_layer_dims = self.get_model_signature()
         self.src_model_layer_shapes = self.src_model.dim_array + [self.src_model.out_dim]
-        self.src_model_dim = self.weight_vector.numel()
+        self.src_model_dim = self.weight_vector.numel() # or the number of parameters in the target layer for masking
         self.gcn = MaskingGCN()
         self.graph_data_loader = GraphDataLoader()
         self.device = 'cuda:1'
         self.prior_distribution = self.get_prior_distribution()
+
+        if isinstance(config.mask_K, int):
+            assert config.mask_K > 0
+            self.K: int = config.mask_K
+        elif isinstance(config.mask_K, Percentage):
+            self.K: int = math.ceil(config.mask_K.dec_value * self.src_model_dim)
     
     def load_src_model(self) -> nn.Module:
         model: HookedMNISTClassifier = HookedMNISTClassifier()
@@ -251,6 +268,7 @@ class GCNTrainer:
     def get_prior_distribution(self) -> Categorical:
         assert self.weight_vector is not None
         probs = torch.abs(self.weight_vector) / torch.linalg.vector_norm(self.weight_vector, ord=1)
+        probs = probs.to(self.device)
         return Categorical(probs=probs)
     
     def train(self) -> None:
@@ -260,43 +278,35 @@ class GCNTrainer:
 
         for s in range(self.config.steps):
             gcn_batch, edge_matrix = self.graph_data_loader.next()
+
             feature_batch = gcn_batch.feature_batch.to(self.device)
             input_batch = gcn_batch.input_batch.to(self.device)
             target_batch = gcn_batch.target_batch.to(self.device)
-
             edge_matrix = edge_matrix.to(self.device)
 
-            logger.info(f'Batch {feature_batch.shape} | Edge {edge_matrix.shape} | Input {input_batch.shape} | Target {target_batch.shape}')
-            preds: Tensor = self.gcn(x=feature_batch, edge_index=edge_matrix)
-
-            model_vector = torch.cat([torch.flatten(p) for p in self.src_model.parameters() if p.requires_grad])
-            prior_distribution = torch.abs(model_vector)
-            prior_distribution /= torch.sum(prior_distribution)
-
             batch_size = feature_batch.shape[0]
+
+            # logger.info(f'Batch {feature_batch.shape} | Edge {edge_matrix.shape} | Input {input_batch.shape} | Target {target_batch.shape}')
+
             loss: Tensor = torch.tensor(0.).to(self.device)
             for i in range(batch_size):
+
                 x, target = input_batch[i].unsqueeze(0), target_batch[i]
+
                 emperical_Q_logits: Tensor = self.gcn(x = feature_batch[i], edge_index = edge_matrix)
-
-                # logger.info(f'Emperical distr shape: {emperical_Q_distribution.shape}')
-
-                mask = self.gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.config.num_masks_K).to(self.device)
+                mask = self.gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.K).to(self.device)
                 masked_model = self.mask_model(mask=mask).to(self.device)
+                
                 masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[target]
-                # logger.info(masked_model_probability)
-                loss -= torch.log(masked_model_probability) # first term of loss in eq 8 of paper
+                loss -= torch.log(masked_model_probability) # 1/3 term of loss 
 
-                loss -= torch.dot(mask, self.prior_distribution.log_prob(torch.arange(start=0, end=self.src_model_dim, step=1)).to(self.device))    # second term of loss
+                idx = torch.arange(start=0, end=self.src_model_dim, step=1, device=self.device)
+                log_probs = self.prior_distribution.log_prob(idx)
+                loss -= torch.dot(mask, log_probs)    # 2/3 term of loss
 
-                # we might need to change logits to probs mode later
-                # lean up device mess!
-                Q_distribution = Categorical(logits=emperical_Q_logits.to(self.device))
-                log_probs = Q_distribution.log_prob(torch.arange(start=0, end=self.src_model_dim, step=1, device=self.device))
-                log_probs = log_probs.to(self.device)
-                loss += torch.dot(mask, log_probs)    # third term of loss
-
-                # be careful division by zero 
+                Q_distribution = Categorical(probs=F.softmax(emperical_Q_logits, dim=-1))
+                log_probs = Q_distribution.log_prob(idx)
+                loss += torch.dot(mask, log_probs)    # 3/3 term of loss
             
             loss /= batch_size  # prevent exploding gradients while optimizing same objective
 
@@ -306,11 +316,11 @@ class GCNTrainer:
             adam_optimizer.zero_grad()
 
             logger.info(f'Step {s} | loss {loss.item()}')
-
-            # sanity check 
-            logger.info(preds.shape)
-            logger.info(torch.sum(preds, dim=1).detach())
+        
+        ckpt_path = self.checkpoint()
+        logger.info(f'GCN checkpoint saved at {ckpt_path}')
         logger.info('Training complete.')
+
 
     def gumbel_top_k_sampling_v2(self, logits, k, temperature=1.0, eps=1e-10) -> Tensor:
         """
@@ -349,3 +359,18 @@ class GCNTrainer:
         # Apply soft mask and normalize
         masked_logits = logits * soft_mask
         return F.softmax(masked_logits / temperature, dim=-1)
+    
+    def checkpoint(self) -> Path:
+        """Returns checkpoint path."""
+        d: Union[str, Path] = self.config.gcn_checkpoint_path
+        if type(d) is str:
+            d = Path(d)
+        d.mkdir(exist_ok=True)
+
+        now = datetime.now().strftime("%Y_%m_%d_%H_%M")
+        file_name = f'gcn_{now}.pt'
+        
+        checkpoint_path = d / file_name
+        torch.save(self.gcn.state_dict(), checkpoint_path)
+        return checkpoint_path
+    

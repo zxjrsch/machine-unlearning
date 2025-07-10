@@ -99,7 +99,7 @@ class GraphGenerator(ModelInspector):
                 model: HookedMNISTClassifier, 
                 checkpoint_path: Union[Path, None]=None, 
                 graph_dataset_dir: Path = Path('./datasets/Graphs'),
-                process_save_batch_size: int = 2,
+                process_save_batch_size: int = 64,
                 forget_digit: int = 9, 
                 device: str = 'cuda:1',
                 mask_layer: Union[int, None] = -2   # specify one layer to mask, if None then all layers selected
@@ -129,12 +129,19 @@ class GraphGenerator(ModelInspector):
         self.loss_fn = nn.CrossEntropyLoss()
         self.analyze()
 
-    def get_dataloader(self, data_path: str = './datasets'):
+    def get_dataloader(self, data_path: str = './datasets') -> DataLoader:
+        dataset = MNIST(root=data_path, train=True, transform=ToTensor(), download=True)
+
+        # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1 for feature extraction
+        return DataLoader(dataset=dataset, batch_size=1)
+
+
+    def get_single_class_dataloader(self, data_path: str = './datasets') -> DataLoader:
         dataset = MNIST(root=data_path, train=True, transform=ToTensor(), download=True)
         subset_indices = (dataset.targets == self.forget_digit).nonzero(as_tuple=True)[0]
         subset = torch.utils.data.Subset(dataset, subset_indices)
 
-        # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1
+        # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1 for feature extraction
         return DataLoader(dataset=subset, batch_size=1)
 
     def analyze(self) -> None:
@@ -393,7 +400,7 @@ class GraphGenerator(ModelInspector):
             input_batch.append(input)
             target_batch.append(target)
             input, target = input.to(self.device), target.to(self.device)
-            assert torch.all(target == self.forget_digit)   # sanity check
+            # assert torch.all(target == self.forget_digit)   # sanity check
             preds = self.model(input)
             loss: Tensor = self.loss_fn(preds, target)
             loss.backward()
@@ -461,7 +468,7 @@ class GraphGenerator(ModelInspector):
         for i, (input, target) in enumerate(self.data_loader):
             if i == idx:
                 input, target = input.to(self.device), target.to(self.device)
-                assert torch.all(target == self.forget_digit)   # sanity check
+                # assert torch.all(target == self.forget_digit)   # sanity check
                 preds = self.model(input)
                 loss: Tensor = self.loss_fn(preds, target)
                 loss.backward()

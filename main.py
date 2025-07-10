@@ -22,32 +22,31 @@ def generate_graph(checkpoint_path):
     dg = GraphGenerator(model=HookedMNISTClassifier(), 
                         checkpoint_path=checkpoint_path)
 
-    data = dg.get_data()
-    logger.info(data)
+    # # If you wish to obtain single training data points in the form of PyG Data
+    # data = dg.get_data()
+    # logger.info(data)
 
     # this saves data in batches
-    dg.save_forward_backward_features(limit=8)
+    dg.save_forward_backward_features(limit=2048)
 
 def train_gcn(src_checkpoint):
-    config = GCNTrainerConfig(src_checkpoint=src_checkpoint)
+    config = GCNTrainerConfig(src_checkpoint=src_checkpoint, mask_K=2500)
     trainer = GCNTrainer(config=config)
     trainer.train()
 
-    # test masking
-    current_model_dim = 8192
-    trainer.mask_single_layer(mask=torch.rand(current_model_dim))
+    # # test masking
+    # current_model_dim = 8192
+    # trainer.mask_single_layer(mask=torch.rand(current_model_dim))
 
     # data_loader = GraphDataLoader()
     # for i in range(5):
     #     data_loader.next()
 
 def main():
+
+    # checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
     checkpoint_path = train_mnist_classifier()
-
-    checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints', '*.pt')))[0])
-
     generate_graph(checkpoint_path=checkpoint_path)
-
     train_gcn(checkpoint_path)
 
 
