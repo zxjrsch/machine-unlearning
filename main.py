@@ -44,7 +44,7 @@ def train_gcn(src_checkpoint):
 def main():
     checkpoint_path = train_mnist_classifier()
 
-    # checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints', '*.pt')))[0])
+    checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints', '*.pt')))[0])
 
     generate_graph(checkpoint_path=checkpoint_path)
 

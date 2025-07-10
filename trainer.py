@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import List, Tuple, Type, Union
 
 import torch
+import torch.nn.functional as F
 from loguru import logger
 from torch import Tensor, nn
+from torch.distributions import Categorical
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
@@ -130,6 +132,7 @@ class GCNTrainerConfig:
     weight_decay=5e-4
     steps=3
     mask_layer: Union[None, int] = -2
+    num_masks_K: Union[int, float] = 2_500
 
 class GraphDataLoader:
     def __init__(self, graph_data_dir: Path = Path('datasets/Graphs')):
@@ -168,6 +171,7 @@ class GCNTrainer:
         self.gcn = MaskingGCN()
         self.graph_data_loader = GraphDataLoader()
         self.device = 'cuda:1'
+        self.prior_distribution = self.get_prior_distribution()
     
     def load_src_model(self) -> nn.Module:
         model: HookedMNISTClassifier = HookedMNISTClassifier()
@@ -198,6 +202,9 @@ class GCNTrainer:
     
     def mask_full_model(self, mask: Tensor) -> nn.Module:
         # assumes HookedMNISTClassifier used so parameters are matrices
+        mask = mask.to(self.device)
+        self.weight_vector = self.weight_vector.to(self.device)
+
         model_vect = torch.mul(mask, self.weight_vector)
 
         i, layers = 0, []
@@ -217,9 +224,12 @@ class GCNTrainer:
             i += 1
 
         model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
-        return model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict)
+        return model
     
     def mask_single_layer(self, mask: Tensor) -> HookedMNISTClassifier:
+        mask = mask.to(self.device)
+        self.weight_vector = self.weight_vector.to(self.device)
         layer_vect = torch.mul(mask, self.weight_vector)
         assert layer_vect.shape[0] == self.src_model_layer_dims[0]
         m,n = [p for p in self.src_model.parameters() if p.requires_grad][self.mask_layer].shape
@@ -230,9 +240,19 @@ class GCNTrainer:
         state_dict[key] = layer_matrix
 
         model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
-        return model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict)
+        return model
+    
+    def mask_model(self, mask: Tensor) -> HookedMNISTClassifier:
+        if self.mask_layer is None:
+            return self.mask_full_model(mask)
+        return self.mask_single_layer(mask)
 
-
+    def get_prior_distribution(self) -> Categorical:
+        assert self.weight_vector is not None
+        probs = torch.abs(self.weight_vector) / torch.linalg.vector_norm(self.weight_vector, ord=1)
+        return Categorical(probs=probs)
+    
     def train(self) -> None:
         adam_optimizer = torch.optim.Adam(self.gcn.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
         self.gcn = self.gcn.to(self.device)
@@ -249,17 +269,83 @@ class GCNTrainer:
             logger.info(f'Batch {feature_batch.shape} | Edge {edge_matrix.shape} | Input {input_batch.shape} | Target {target_batch.shape}')
             preds: Tensor = self.gcn(x=feature_batch, edge_index=edge_matrix)
 
-            # train_loss: Tensor = None
-            # train_loss.backward()
-            # adam_optimizer.step()
-            # adam_optimizer.zero_grad()
+            model_vector = torch.cat([torch.flatten(p) for p in self.src_model.parameters() if p.requires_grad])
+            prior_distribution = torch.abs(model_vector)
+            prior_distribution /= torch.sum(prior_distribution)
 
-            # logger.info(f'Step {s} | loss {train_loss.item()}')
+            batch_size = feature_batch.shape[0]
+            loss: Tensor = torch.tensor(0.).to(self.device)
+            for i in range(batch_size):
+                x, target = input_batch[i].unsqueeze(0), target_batch[i]
+                emperical_Q_logits: Tensor = self.gcn(x = feature_batch[i], edge_index = edge_matrix)
+
+                # logger.info(f'Emperical distr shape: {emperical_Q_distribution.shape}')
+
+                mask = self.gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.config.num_masks_K).to(self.device)
+                masked_model = self.mask_model(mask=mask).to(self.device)
+                masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[target]
+                # logger.info(masked_model_probability)
+                loss -= torch.log(masked_model_probability) # first term of loss in eq 8 of paper
+
+                loss -= torch.dot(mask, self.prior_distribution.log_prob(torch.arange(start=0, end=self.src_model_dim, step=1)).to(self.device))    # second term of loss
+
+                # we might need to change logits to probs mode later
+                # lean up device mess!
+                Q_distribution = Categorical(logits=emperical_Q_logits.to(self.device))
+                log_probs = Q_distribution.log_prob(torch.arange(start=0, end=self.src_model_dim, step=1, device=self.device))
+                log_probs = log_probs.to(self.device)
+                loss += torch.dot(mask, log_probs)    # third term of loss
+
+                # be careful division by zero 
+            
+            loss /= batch_size  # prevent exploding gradients while optimizing same objective
+
+            # 2x check retain_graph setting
+            loss.backward(retain_graph=True)
+            adam_optimizer.step()
+            adam_optimizer.zero_grad()
+
+            logger.info(f'Step {s} | loss {loss.item()}')
 
             # sanity check 
             logger.info(preds.shape)
             logger.info(torch.sum(preds, dim=1).detach())
         logger.info('Training complete.')
 
-    def loss_fn(self):
-        pass
+    def gumbel_top_k_sampling_v2(self, logits, k, temperature=1.0, eps=1e-10) -> Tensor:
+        """
+        Alternative implementation using continuous relaxation of top-k operation.
+        This version maintains better gradients by avoiding hard masking. 
+
+        The code for this method is shared by Wuga, see
+        https://claude.ai/public/artifacts/138b83ce-f40f-495f-81a7-bc8bd7416fce
+
+        See Also 
+        [1] https://arxiv.org/pdf/1903.06059
+        [2] https://papers.nips.cc/paper_files/paper/2014/file/937debc749f041eb5700df7211ac795c-Paper.pdf
+        [3] https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.gumbel_softmax.html 
+        
+        Args:
+            logits (torch.Tensor): Input logits of shape (..., vocab_size)
+            k (int): Number of top elements to sample
+            temperature (float): Temperature parameter
+            eps (float): Small constant for numerical stability
+        
+        Returns:
+            torch.Tensor: Soft top-k samples
+        """
+        # Sample Gumbel noise
+        gumbel_noise = -torch.log(-torch.log(torch.rand_like(logits) + eps) + eps)
+        gumbel_logits = logits + gumbel_noise
+        
+        # Use continuous relaxation of top-k
+        # Sort the gumbel logits to find the k-th largest value
+        sorted_gumbel, _ = torch.sort(gumbel_logits, dim=-1, descending=True)
+        threshold = sorted_gumbel[..., k-1:k]  # k-th largest value
+        
+        # Create soft mask using sigmoid
+        soft_mask = torch.sigmoid((gumbel_logits - threshold) / temperature)
+        
+        # Apply soft mask and normalize
+        masked_logits = logits * soft_mask
+        return F.softmax(masked_logits / temperature, dim=-1)
