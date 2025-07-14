@@ -1,91 +1,193 @@
+import copy
 import glob
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from random import randint
-from typing import Any, Tuple, Union
+from typing import List, Tuple
 
 import torch
-import torch.nn.functional as F
 from loguru import logger
-from torch import nn
-from torch_geometric.data import Data
-from torchinfo import summary
+from omegaconf import OmegaConf
+from torch import Tensor
+from torch.utils.data import DataLoader, Subset
+from torchvision.datasets import MNIST
+from torchvision.transforms import ToTensor
 
 from data import GraphGenerator
 from model import HookedMNISTClassifier, MaskingGCN
-from trainer import GCNTrainer, GCNTrainerConfig
+from trainer import gumbel_top_k_sampling_v2
 
+global_config = OmegaConf.load("configs/config.yaml")
 
 @dataclass
 class EvalConfig:
-    gcn_checkpoint: Path = Path(sorted(glob.glob(os.path.join('checkpoints/gcn/', '*.pt')))[0])
-    classifier_checkpoint: Path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
-    eval_datatset_dir: Path = Path('./eval')
-    mask_layer: int = -2
-    forget_digit: int = 9
-
+    data_path: Path = Path('datasets')
+    gcn_path: Path =  Path(sorted(glob.glob(os.path.join('checkpoints/gcn/', '*.pt')))[0]) 
+    classifier_path: Path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
+    graph_data_path: Path = Path('eval/Graphs')
+    forget_digit = 9
+    batch_size = 16
+    device = global_config.device
+    mask_layer = -2
+    topK = 2500
 
 class Eval:
-    def __init__(self, config: EvalConfig, device='cuda:1') -> None:
-        self.masking_gcn = self.load_model(config.gcn_checkpoint, MaskingGCN)
-        self.classifier_model = self.load_model(config.classifier_checkpoint, HookedMNISTClassifier)
-        self.device = device
-        self.graph_generator = GraphGenerator(
-            model = HookedMNISTClassifier(),
-            checkpoint_path=config.classifier_checkpoint, 
-            graph_dataset_dir=config.eval_datatset_dir,
-            forget_digit=config.forget_digit,
-            device=device,
-            mask_layer=config.mask_layer
+    def __init__(self, config: EvalConfig):
+        self.config = config
+        self.gcn = self.load_gcn()
+        self.classifier = self.load_classifier()
+        self.graph_generator = self.load_graph_generator()
+
+    def load_graph_generator(self) -> GraphGenerator:
+        return GraphGenerator(
+            model=self.classifier,
+            graph_dataset_dir=self.config.graph_data_path,
+            process_save_batch_size = 1,     # we want per-sample grad
+            forget_digit=self.config.forget_digit,
+            mask_layer=self.config.mask_layer,
+            device=self.config.device
         )
-        self.class_dataloader = self.graph_generator.data_loader
-        self.trainer_config = GCNTrainerConfig(src_checkpoint=config.classifier_checkpoint, mask_K=2500)
-        self.trainer = GCNTrainer(self.trainer_config)
 
-
-    def generate_graph(self, idx=None) -> Tuple[Any, Data]:
-        i = randint(0, 20000) if idx is None else idx
-        return self.graph_generator.get_data(idx=i)
+    def load_gcn(self) -> MaskingGCN:
+        model = MaskingGCN()
+        model.load_state_dict(torch.load(self.config.gcn_path))
+        return model 
     
-    def eval_single_datapoint(self) -> Tuple[int, int]:
-        self.masking_gcn = self.masking_gcn.to(self.device)
-        data: Data = None
-        input, target, data = self.generate_graph()
-        input = input.to(self.device)
-        x, edge_index = data.x.to(self.device), data.edge_index.to(self.device)
+    def load_classifier(self) -> HookedMNISTClassifier:
+        model = HookedMNISTClassifier()
+        model = torch.compile(model)
+        model.load_state_dict(torch.load(self.config.classifier_path))
+        return model
+
+    def mnist_class_representatives(self) -> List[Tuple[Tensor, Tensor]]:
+        dataset = MNIST(root=self.config.data_path, train=False, transform=ToTensor(), download=True)
+        dataset = iter(DataLoader(dataset=dataset, batch_size=1))
+        representatives = []
+        for d in range(10):
+            data = next(dataset)
+            while data[1].item() != d:
+                data = next(dataset)
+            representatives.append(data)
+        return representatives
+    
+    def mnist_forget_set(self) -> DataLoader:
+        dataset = MNIST(root=self.config.data_path, train=False, transform=ToTensor(), download=True)
+        forget_indices = (dataset.targets == self.config.forget_digit).nonzero(as_tuple=True)[0]
+        forget_set = Subset(dataset, forget_indices)
+        return DataLoader(dataset=forget_set, batch_size=self.config.batch_size)        
+        
+    def mnist_retain_set(self) -> DataLoader:
+        dataset = MNIST(root=self.config.data_path, train=False, transform=ToTensor(), download=True)
+        retain_indices = (dataset.targets != self.config.forget_digit).nonzero(as_tuple=True)[0]
+        retain_set = Subset(dataset, retain_indices)
+        return DataLoader(dataset=retain_set, batch_size=self.config.batch_size)       
+    
+    def compute_representative_masks(self) -> List[Tuple[Tensor, int]]:
+        """Gets masks for all the classes."""
+        reps = self.mnist_class_representatives()
+
+        # a list for all digits
+        node_features = self.graph_generator.get_representative_features(reps)
+        edge_matrix = self.graph_generator.edge_matrix
+        
+        self.gcn.eval()
+        self.gcn = self.gcn.to(self.config.device)
+
+        mask_label_list = []
         with torch.no_grad():
-            emperical_Q_logits = self.masking_gcn(x=x, edge_index = edge_index)
-            mask = self.trainer.gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.trainer_config.mask_K).to(self.device)
-            masked_model = self.trainer.mask_single_layer(mask=mask).to(self.device)
-            probs = F.softmax(masked_model(input), dim=-1)
-            pred = probs.argmax(1)
-            return pred, target
-        
-        
-    def eval(self, rounds = 100) -> float:
-        num_correct = 0
-        for _ in range(rounds):
-            pred, target = self.eval_single_datapoint()
-            if pred == target:
-                num_correct += 1
-        return num_correct / rounds * 100
+            for features, cls in node_features:
+                Q_logits = self.gcn(x=features, edge_index=edge_matrix)
+                mask = gumbel_top_k_sampling_v2(logits=Q_logits, k=self.config.topK, temperature=1, eps=1e-10)
+                mask_label_list.append((mask, cls.item()))
 
+        return mask_label_list
+    
+    def get_model_mask(self) -> Tensor:
+        mask_label_list = self.compute_representative_masks()
 
-    def load_model(self, path: Path, architecture: Union[HookedMNISTClassifier, MaskingGCN]) -> nn.Module:
-        model: nn.Module = architecture()
-        if architecture == HookedMNISTClassifier:
-            model = torch.compile(model)
-        model.load_state_dict(torch.load(path))
+        forget_mask = None
+        retain_mask = None
+
+        for mask, digit in mask_label_list:
+            if digit == self.config.forget_digit:
+                forget_mask = mask
+            else:
+                retain_mask = mask if retain_mask is None else retain_mask + mask
+
+        mask = torch.clamp(forget_mask - retain_mask, min=0)
+
+        # return 1 for weight values which are are important to predict retain set but not forget data
+        return (mask == 0).float()
+    
+    def get_masked_model(self) -> HookedMNISTClassifier:
+        """Single layer masking."""
+        mask: Tensor = self.get_model_mask()
+        mask = mask.to(self.config.device)
+        weight_vector = self.graph_generator.weight_feature.to(self.config.device)
+        layer_vect = torch.mul(mask, weight_vector)
+
+        m,n = [p for p in self.classifier.parameters() if p.requires_grad][self.config.mask_layer].shape
+        layer_matrix = layer_vect.unflatten(dim=0, sizes=(m,n))
+
+        state_dict = copy.deepcopy(self.classifier.state_dict())
+        key = list(state_dict.keys())[self.config.mask_layer]
+        state_dict[key] = layer_matrix
+
+        model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
+        model.load_state_dict(state_dict)
         return model
     
-    def inspect_models(self) -> None:
-        summary(self.masking_gcn)
-        summary(self.classifier_model)
+    def inference(self, model: HookedMNISTClassifier, data_loader: DataLoader, is_forget_set: bool = True) -> None:
+        model = model.to(self.config.device)
+        model.eval()
+
+        test_loss, num_batches = 0, len(data_loader)
+        score, total = 0, len(data_loader.dataset)
+        with torch.no_grad():
+            for i, (input, target) in enumerate(self.val_data):
+                input = input.to(self.config.device)
+                target = target.to(self.config.device)
+                
+                preds: torch.Tensor = model(input)
+                test_loss += self.graph_generator.loss_fn(preds, target).item()
+                score += (preds.argmax(1) == target).type(torch.float).sum().item()
+
+            test_loss /= num_batches
+            score /= total
+
+        eval_set = 'forget set' if is_forget_set else 'retain set'
+        logger.info(f'Test loss on {eval_set} {round(test_loss, 5)} | Score {round(100*score, 1)} %')
+
     
+    def eval(self) -> None:
+
+        # masked model 
+        self.inference(
+            model=self.get_masked_model(),
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=True
+        )
+        self.inference(
+            model=self.get_masked_model(),
+            data_loader=self.mnist_retain_set(),
+            is_forget_set=False
+        )
+
+
+         # original model 
+        self.inference(
+            model=self.classifier,
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=True
+        )
+        self.inference(
+            model=self.classifier,
+            data_loader=self.mnist_retain_set(),
+            is_forget_set=False
+        )
+        
+
 if __name__ == '__main__':
     config = EvalConfig()
-    eval = Eval(config=config)
-    # eval.inspect_models()
-    percent = eval.eval()
-    logger.info(f'percent {percent}')
+    eval = Eval(config)
+    x = eval.eval()

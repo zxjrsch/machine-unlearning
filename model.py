@@ -178,7 +178,7 @@ class MaskingGCNConv(MessagePassing):
 
 class MaskingGCN(nn.Module):
 
-    def __init__(self, num_node_features=4, num_message_passing_rounds=3, hidden_dim=32, use_deg_avg=False):
+    def __init__(self, num_node_features=4, num_message_passing_rounds=3, hidden_dim=32, use_deg_avg=False, output_logits=True):
         """
         Current node features:
             1) weight
@@ -192,8 +192,12 @@ class MaskingGCN(nn.Module):
 
         use_deg_avg
             Uses PyG default GCNCov instead of custom defined MaskingGCNConv
+
+        If output_logits is True, outputs of GCN are not normalized.
         """
         super().__init__()
+
+        self.output_logits = output_logits
 
         self.proj_in = MaskingGCNConv(num_node_features, hidden_dim)
 
@@ -211,13 +215,16 @@ class MaskingGCN(nn.Module):
             })
 
         self.proj_out = nn.Linear(hidden_dim, 1)
-        self.softmax = nn.Softmax(dim=1)
             
     def forward(self, x, edge_index):
 
         x = self.proj_in(x, edge_index)
         for conv_layer in self.conv.values():
             x = F.softmax(conv_layer(x, edge_index), dim=1)
-    
+
+        if self.output_logits:
+            return self.proj_out(x)
+
+        # normalized probability
         return F.softmax(self.proj_out(x), dim=1).squeeze(-1)
     

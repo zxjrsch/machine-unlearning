@@ -5,6 +5,7 @@ from typing import Any, Iterator, List, Tuple, Union
 
 import torch
 from loguru import logger
+from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.nn.parameter import Parameter
 from torch.utils.data import DataLoader
@@ -15,6 +16,7 @@ from torchvision.transforms import ToTensor
 
 from model import Activations, Gradients, HookedMNISTClassifier, Weights
 
+global_config = OmegaConf.load("configs/config.yaml")
 
 class ModelInspector:
     def __init__(self, model: nn.Module) -> None:
@@ -101,7 +103,7 @@ class GraphGenerator(ModelInspector):
                 graph_dataset_dir: Path = Path('./datasets/Graphs'),
                 process_save_batch_size: int = 64,
                 forget_digit: int = 9, 
-                device: str = 'cuda:1',
+                device: str = global_config.device,
                 mask_layer: Union[int, None] = -2   # specify one layer to mask, if None then all layers selected
     ) -> None:
     
@@ -113,7 +115,7 @@ class GraphGenerator(ModelInspector):
             self.model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
             logger.info(f'Loaded pretrained model from {checkpoint_path}')
 
-        graph_dataset_dir.mkdir(exist_ok=True)
+        graph_dataset_dir.mkdir(exist_ok=True, parents=True)
         self.graph_dataset_dir = graph_dataset_dir
         self.mask_layer = self.validate_layer(mask_layer)
 
@@ -308,6 +310,7 @@ class GraphGenerator(ModelInspector):
             logger.info(f'Edge matrix saved at {file_name}')
 
         return edge_matrix
+
                 
     def flatten_and_zero_grad(self) -> Tensor:
         gradients = []
@@ -420,8 +423,7 @@ class GraphGenerator(ModelInspector):
             in_feature, out_feature = self.flatten_in_out_activation(self.model.activations)
             gradients: Tensor = self.flatten_and_zero_grad()
 
-            # dim = [num_vertices, num_features-1] 
-            # weight feature is shared thus stored separately
+            # dim = [num_vertices, num_features] 
             graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
             
             # # tracer
@@ -500,3 +502,41 @@ class GraphGenerator(ModelInspector):
                 torch.cuda.empty_cache()
 
                 return input, target, Data(x=graph_feature_matrix, edge_index=self.edge_matrix)
+
+    def get_representative_features(self, representatives: List[Tuple[Tensor, Tensor]]) -> List[Tuple[Tensor, Tensor]]:
+        """The input list consists of (image, label) and output list contains (feature, label). 
+        This method is currently used for evaluation pipeline.
+        """
+        """Saves grads and activations."""
+
+        self.model: HookedMNISTClassifier = self.model.to(self.device)
+        self.weight_feature = self.weight_feature.to(self.device)
+
+        self.model.capture_mode(is_on=True)
+        self.model.eval()
+
+        graph_features: List[Tuple[Tensor, Tensor]] = []
+        for input, target in representatives:
+
+            self.model.zero_grad(set_to_none=True)
+
+            input, target = input.to(self.device), target.to(self.device)
+            preds = self.model(input)
+            loss: Tensor = self.loss_fn(preds, target)
+            loss.backward()
+
+            in_feature, out_feature = self.flatten_in_out_activation(self.model.activations)
+            gradients: Tensor = self.flatten_and_zero_grad()
+
+            # dim = [num_vertices, num_features] 
+            graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
+            
+            # # tracer
+            # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
+            # logger.info(graph_feature_matrix.shape)
+            
+            data = (graph_feature_matrix, target)
+            graph_features.append(data)
+
+            logger.info(f'Generated graph feature for representatitive {target.detach()}')
+        return graph_features

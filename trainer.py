@@ -10,6 +10,7 @@ from typing import List, NewType, Tuple, Type, Union
 import torch
 import torch.nn.functional as F
 from loguru import logger
+from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.distributions import Categorical
 from torch.utils.data import DataLoader
@@ -18,6 +19,8 @@ from torchvision.transforms import ToTensor
 
 from data import GCNBatch, GraphGenerator
 from model import HookedMNISTClassifier, MaskingGCN
+
+global_config = OmegaConf.load("configs/config.yaml")
 
 
 @dataclass
@@ -61,7 +64,7 @@ class Trainer:
         return val_loader
 
     
-    def train(self, device='cuda:1', step_limit: Union[int, None]=None) -> Path:
+    def train(self, device=global_config.device, step_limit: Union[int, None]=None) -> Path:
         """Returns checkpoint path."""
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
 
@@ -93,7 +96,7 @@ class Trainer:
         logger.info('Training complete.')
         return checkpoint_path
 
-    def val(self, device='cuda:1') -> None:
+    def val(self, device=global_config.device) -> None:
         self.model = self.model.to(device)
         self.model.eval()
         test_loss, num_batches = 0, len(self.val_data)
@@ -117,7 +120,7 @@ class Trainer:
         d: Union[str, Path] = self.config.checkpoint_dir
         if type(d) is str:
             d = Path(d)
-        d.mkdir(exist_ok=True)
+        d.mkdir(exist_ok=True, parents=True)
 
         now = datetime.now().strftime("%Y_%m_%d_%H_%M")
         file_name = self.config.model_name + '_' + now + '.pt'
@@ -144,6 +147,7 @@ class GCNTrainerConfig:
     steps=32
     mask_layer: Union[None, int] = -2
     mask_K: Union[int, Percentage] = 2_500 # number of parameters to keep or some Percentage of the model/layer 
+    device = global_config.device
 
 class GraphDataLoader:
     def __init__(self, graph_data_dir: Path = Path('datasets/Graphs')):
@@ -181,7 +185,7 @@ class GCNTrainer:
         self.src_model_dim = self.weight_vector.numel() # or the number of parameters in the target layer for masking
         self.gcn = MaskingGCN()
         self.graph_data_loader = GraphDataLoader()
-        self.device = 'cuda:1'
+        self.device = self.config.device
         self.prior_distribution = self.get_prior_distribution()
 
         if isinstance(config.mask_K, int):
@@ -295,7 +299,7 @@ class GCNTrainer:
                 x, target = input_batch[i].unsqueeze(0), target_batch[i]
 
                 emperical_Q_logits: Tensor = self.gcn(x = feature_batch[i], edge_index = edge_matrix)
-                mask = self.gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.K).to(self.device)
+                mask = gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.K).to(self.device)
                 masked_model = self.mask_model(mask=mask).to(self.device)
                 
                 masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[target]
@@ -321,9 +325,22 @@ class GCNTrainer:
         ckpt_path = self.checkpoint()
         logger.info(f'GCN checkpoint saved at {ckpt_path}')
         logger.info('Training complete.')
+    
+    def checkpoint(self) -> Path:
+        """Returns checkpoint path."""
+        d: Union[str, Path] = self.config.gcn_checkpoint_path
+        if type(d) is str:
+            d = Path(d)
+        d.mkdir(exist_ok=True, parents=True)
 
-
-    def gumbel_top_k_sampling_v2(self, logits, k, temperature=1.0, eps=1e-10) -> Tensor:
+        now = datetime.now().strftime("%Y_%m_%d_%H_%M")
+        file_name = f'gcn_{now}.pt'
+        
+        checkpoint_path = d / file_name
+        torch.save(self.gcn.state_dict(), checkpoint_path)
+        return checkpoint_path
+    
+def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
         """
         Alternative implementation using continuous relaxation of top-k operation.
         This version maintains better gradients by avoiding hard masking. 
@@ -360,18 +377,3 @@ class GCNTrainer:
         # Apply soft mask and normalize
         masked_logits = logits * soft_mask
         return F.softmax(masked_logits / temperature, dim=-1)
-    
-    def checkpoint(self) -> Path:
-        """Returns checkpoint path."""
-        d: Union[str, Path] = self.config.gcn_checkpoint_path
-        if type(d) is str:
-            d = Path(d)
-        d.mkdir(exist_ok=True)
-
-        now = datetime.now().strftime("%Y_%m_%d_%H_%M")
-        file_name = f'gcn_{now}.pt'
-        
-        checkpoint_path = d / file_name
-        torch.save(self.gcn.state_dict(), checkpoint_path)
-        return checkpoint_path
-    
