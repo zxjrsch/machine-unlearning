@@ -3,7 +3,7 @@ import glob
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 import torch
 from loguru import logger
@@ -21,9 +21,9 @@ global_config = OmegaConf.load("configs/config.yaml")
 
 @dataclass
 class EvalConfig:
+    gcn_path: Path # =  Path(sorted(glob.glob(os.path.join('checkpoints/gcn/', '*.pt')))[0]) 
+    classifier_path: Path # = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
     data_path: Path = Path('datasets')
-    gcn_path: Path =  Path(sorted(glob.glob(os.path.join('checkpoints/gcn/', '*.pt')))[0]) 
-    classifier_path: Path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
     graph_data_path: Path = Path('eval/Graphs')
     forget_digit = 9
     batch_size = 16
@@ -45,7 +45,8 @@ class Eval:
             process_save_batch_size = 1,     # we want per-sample grad
             forget_digit=self.config.forget_digit,
             mask_layer=self.config.mask_layer,
-            device=self.config.device
+            device=self.config.device, 
+            save_redundant_features=False
         )
 
     def load_gcn(self) -> MaskingGCN:
@@ -119,7 +120,15 @@ class Eval:
         # return 1 for weight values which are are important to predict retain set but not forget data
         return (mask == 0).float()
     
-    def get_masked_model(self) -> HookedMNISTClassifier:
+    def model_mask_forget_class(self) -> HookedMNISTClassifier:
+        forget_class_mask = None
+        for mask, digit in self.compute_representative_masks():
+            if digit == self.config.forget_digit:
+                forget_class_mask = mask
+                break
+        return self.get_masked_model(custom_mask=forget_class_mask)
+
+    def get_masked_model(self, custom_mask: Union[Tensor, None]=None) -> HookedMNISTClassifier:
         """Single layer masking."""
         mask: Tensor = self.get_model_mask()
         mask = mask.to(self.config.device)
@@ -185,7 +194,19 @@ class Eval:
             data_loader=self.mnist_retain_set(),
             is_forget_set=False
         )
+
+        # # study mask efficacy
+        # self.inference(
+        #     model=self.model_mask_forget_class(),
+        #     data_loader=self.mnist_forget_set(),
+        #     is_forget_set=True
+        # )
         
+        # self.inference(
+        #     model=self.classifier,
+        #     data_loader=self.mnist_forget_set(),
+        #     is_forget_set=True
+        # )
 
 if __name__ == '__main__':
     config = EvalConfig()

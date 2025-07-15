@@ -44,7 +44,7 @@ def train_gcn(src_checkpoint):
     # for i in range(5):
     #     data_loader.next()
 
-def eval(gcn_path, classifier_path):
+def evaluation(gcn_path, classifier_path):
     # for real usecase 
     config = EvalConfig(gcn_path=gcn_path, classifier_path=classifier_path)
     eval = Eval(config)
@@ -56,7 +56,7 @@ def main():
     classifier_checkpoint_path = train_mnist_classifier()
     generate_graph(checkpoint_path=classifier_checkpoint_path)
     gcn_checkpoint_path = train_gcn(classifier_checkpoint_path)
-    eval(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path)
+    evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path)
 
 
 if __name__ == "__main__":

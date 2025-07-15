@@ -1,1 +1,1 @@
-device: 'mps'
+device: 'cuda:1'

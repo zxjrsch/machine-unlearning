@@ -104,7 +104,8 @@ class GraphGenerator(ModelInspector):
                 process_save_batch_size: int = 64,
                 forget_digit: int = 9, 
                 device: str = global_config.device,
-                mask_layer: Union[int, None] = -2   # specify one layer to mask, if None then all layers selected
+                mask_layer: Union[int, None] = -2,   # specify one layer to mask, if None then all layers selected
+                save_redundant_features: bool = True
     ) -> None:
     
         
@@ -119,7 +120,7 @@ class GraphGenerator(ModelInspector):
         self.graph_dataset_dir = graph_dataset_dir
         self.mask_layer = self.validate_layer(mask_layer)
 
-        self._save_redundant_features = True
+        self._save_redundant_features = save_redundant_features
 
         self.forget_digit = forget_digit
         self.process_save_batch_size = process_save_batch_size
@@ -441,7 +442,8 @@ class GraphGenerator(ModelInspector):
                     target_batch = torch.stack(target_batch, dim=0).squeeze()
                 )
 
-                logger.info(f'Saving batch {batch_idx} of {total_batches}')
+                if batch_idx % 10 == 0:
+                    logger.info(f'Saving batch {batch_idx} of {total_batches}')
                 file_name = self.graph_dataset_dir / f'batch_{batch_idx}.pt'
 
         
@@ -538,5 +540,5 @@ class GraphGenerator(ModelInspector):
             data = (graph_feature_matrix, target)
             graph_features.append(data)
 
-            logger.info(f'Generated graph feature for representatitive {target.detach()}')
+            # logger.info(f'Generated graph feature for representatitive {target.detach()}')
         return graph_features

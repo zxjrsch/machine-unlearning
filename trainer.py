@@ -32,7 +32,7 @@ class TrainerConfig:
     model_name: str = 'mnist_classifier'
     epochs: int = 1
     lr: float = 1e-3
-    logging_steps: int = 10
+    logging_steps: int = 20
     wandb = None
 
 
@@ -92,8 +92,8 @@ class Trainer:
                     self.model.train()
 
         checkpoint_path: Path = self.checkpoint()
-        logger.info(f'Checkpoints saved to {checkpoint_path}')
-        logger.info('Training complete.')
+        logger.info(f'Classifier checkpoints saved to {checkpoint_path}')
+        logger.info('Classifier training complete.')
         return checkpoint_path
 
     def val(self, device=global_config.device) -> None:
@@ -289,7 +289,7 @@ class GCNTrainer:
             edge_matrix = edge_matrix.to(self.device)
 
             batch_size = feature_batch.shape[0]
-            logger.info(f'GCN training batch size: {batch_size}')
+            # logger.info(f'GCN training batch size: {batch_size}')
 
             # logger.info(f'Batch {feature_batch.shape} | Edge {edge_matrix.shape} | Input {input_batch.shape} | Target {target_batch.shape}')
 
@@ -319,12 +319,12 @@ class GCNTrainer:
             loss.backward(retain_graph=True)
             adam_optimizer.step()
             adam_optimizer.zero_grad()
-
-            logger.info(f'Step {s} | loss {loss.item()}')
+            if s % 10 == 0:
+                logger.info(f'Step {s} | loss {loss.item()}')
         
         ckpt_path = self.checkpoint()
         logger.info(f'GCN checkpoint saved at {ckpt_path}')
-        logger.info('Training complete.')
+        logger.info('GCN Training complete.')
         return ckpt_path
     
     def checkpoint(self) -> Path:
