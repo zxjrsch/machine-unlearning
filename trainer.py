@@ -325,6 +325,7 @@ class GCNTrainer:
         ckpt_path = self.checkpoint()
         logger.info(f'GCN checkpoint saved at {ckpt_path}')
         logger.info('Training complete.')
+        return ckpt_path
     
     def checkpoint(self) -> Path:
         """Returns checkpoint path."""

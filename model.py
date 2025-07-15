@@ -223,7 +223,7 @@ class MaskingGCN(nn.Module):
             x = F.softmax(conv_layer(x, edge_index), dim=1)
 
         if self.output_logits:
-            return self.proj_out(x)
+            return self.proj_out(x).squeeze()
 
         # normalized probability
         return F.softmax(self.proj_out(x), dim=1).squeeze(-1)

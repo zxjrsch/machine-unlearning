@@ -88,7 +88,7 @@ class Eval:
 
         # a list for all digits
         node_features = self.graph_generator.get_representative_features(reps)
-        edge_matrix = self.graph_generator.edge_matrix
+        edge_matrix = self.graph_generator.edge_matrix.to(self.config.device)
         
         self.gcn.eval()
         self.gcn = self.gcn.to(self.config.device)
@@ -144,7 +144,7 @@ class Eval:
         test_loss, num_batches = 0, len(data_loader)
         score, total = 0, len(data_loader.dataset)
         with torch.no_grad():
-            for i, (input, target) in enumerate(self.val_data):
+            for i, (input, target) in enumerate(data_loader):
                 input = input.to(self.config.device)
                 target = target.to(self.config.device)
                 
@@ -190,4 +190,4 @@ class Eval:
 if __name__ == '__main__':
     config = EvalConfig()
     eval = Eval(config)
-    x = eval.eval()
+    eval.eval()
