@@ -6,11 +6,11 @@ import torch
 from loguru import logger
 
 from data import GraphGenerator
+from eval import Eval, EvalConfig
 from model import HookedMNISTClassifier
 from trainer import (GCNTrainer, GCNTrainerConfig, GraphDataLoader, Trainer,
                      TrainerConfig)
 
-from eval import Eval, EvalConfig
 
 def train_mnist_classifier():
     config = TrainerConfig()
@@ -48,7 +48,7 @@ def evaluation(gcn_path, classifier_path):
     # for real usecase 
     config = EvalConfig(gcn_path=gcn_path, classifier_path=classifier_path)
     eval = Eval(config)
-    eval.eval()
+    return eval.eval()
 
 def main():
 
@@ -56,7 +56,7 @@ def main():
     classifier_checkpoint_path = train_mnist_classifier()
     generate_graph(checkpoint_path=classifier_checkpoint_path)
     gcn_checkpoint_path = train_gcn(classifier_checkpoint_path)
-    evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path)
+    metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path)
 
 
 if __name__ == "__main__":

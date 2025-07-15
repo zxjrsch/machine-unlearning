@@ -1,10 +1,13 @@
 import copy
 import glob
+import json
 import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
+import matplotlib.pyplot as plt
 import torch
 from loguru import logger
 from omegaconf import OmegaConf
@@ -25,6 +28,7 @@ class EvalConfig:
     classifier_path: Path # = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
     data_path: Path = Path('datasets')
     graph_data_path: Path = Path('eval/Graphs')
+    metrics_path: Path = Path('eval/Metrics')
     forget_digit = 9
     batch_size = 16
     device = global_config.device
@@ -32,11 +36,12 @@ class EvalConfig:
     topK = 2500
 
 class Eval:
-    def __init__(self, config: EvalConfig):
+    def __init__(self, config: EvalConfig, draw_eval_plots: bool=True):
         self.config = config
         self.gcn = self.load_gcn()
         self.classifier = self.load_classifier()
         self.graph_generator = self.load_graph_generator()
+        self.draw_eval_plots = draw_eval_plots
 
     def load_graph_generator(self) -> GraphGenerator:
         return GraphGenerator(
@@ -146,7 +151,7 @@ class Eval:
         model.load_state_dict(state_dict)
         return model
     
-    def inference(self, model: HookedMNISTClassifier, data_loader: DataLoader, is_forget_set: bool = True) -> None:
+    def inference(self, model: HookedMNISTClassifier, data_loader: DataLoader, is_forget_set: bool = True, description: str = None) -> Any:
         model = model.to(self.config.device)
         model.eval()
 
@@ -162,53 +167,176 @@ class Eval:
                 score += (preds.argmax(1) == target).type(torch.float).sum().item()
 
             test_loss /= num_batches
+            test_loss = round(test_loss, 5)
             score /= total
+            score = round(100*score, 1) # percentage
 
         eval_set = 'forget set' if is_forget_set else 'retain set'
-        logger.info(f'Test loss on {eval_set} {round(test_loss, 5)} | Score {round(100*score, 1)} %')
+        logger.info(f'Exp: {description} | Test loss on {eval_set} {test_loss} | Score {score} %')
 
+        return {
+            'experiment': description,
+            'eval data': eval_set,
+            'test loss': test_loss,
+            'score': score
+        }
     
-    def eval(self) -> None:
+    def draw_visualization(self, loss: List[float], score: List[float], experiment: str = '') -> None:
+        categories = ['Before Masking', 'After Masking']
 
-        # masked model 
-        self.inference(
+        fig, axs = plt.subplots(1, 2, figsize=(10, 4))  # 1 row, 2 columns
+
+        # Plot loss
+        axs[0].bar(categories, loss, color='blue')
+        axs[0].set_title('Test Loss')
+        axs[0].set_ylabel('Loss')
+
+        # Plot score
+        axs[1].bar(categories, score, color='blue')
+        axs[1].set_title('Score')
+        axs[1].set_ylabel('Score')
+        plt.suptitle(f'{experiment} (top-{self.config.topK})')
+        plt.tight_layout()
+
+        self.config.metrics_path.mkdir(parents=True, exist_ok=True)
+        save_path = self.config.metrics_path / f'{experiment}_top_{self.config.topK}.png'
+        plt.savefig(save_path)
+        plt.show()
+
+    def eval_unlearning(self) -> Dict:
+        """Evaluate model before and after MIMU masking on forget set."""
+
+        logger.info('..... eval unlearning .....')
+        before_masking_eval_metrics = self.inference(
+            description='no masking on forget set',
+            model=self.classifier,
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=True
+        )
+
+        after_masking_eval_metrics = self.inference(
+            description='mimu on forget set',
             model=self.get_masked_model(),
             data_loader=self.mnist_forget_set(),
             is_forget_set=True
         )
-        self.inference(
+
+        if self.draw_eval_plots:
+
+            self.draw_visualization(
+                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss']],
+                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score']],
+                experiment='eval_unlearning_on_forget_set'
+            )
+
+        return {
+            'experiment': 'eval_unlearning',
+            # 'top-K value': self.config.topK,
+            'eval data': 'forget_set',
+            'before masking loss': before_masking_eval_metrics['test loss'],
+            'after masking loss': after_masking_eval_metrics['test loss'],
+            'before masking score': before_masking_eval_metrics['score'],
+            'after masking score': after_masking_eval_metrics['score']
+        }
+
+    def eval_performance_degradation(self) -> Dict:
+        """Eval model before and after MIMU masking on retain set."""
+
+        logger.info('..... eval performance degradation .....')
+
+        before_masking_eval_metrics = self.inference(
+            description='no masking on retain set',
+            model=self.classifier,
+            data_loader=self.mnist_retain_set(),
+            is_forget_set=False
+        )
+
+        after_masking_eval_metrics = self.inference(
+            description='mimu on retain set',
             model=self.get_masked_model(),
             data_loader=self.mnist_retain_set(),
             is_forget_set=False
         )
 
+        if self.draw_eval_plots:
 
-         # original model 
-        self.inference(
+            self.draw_visualization(
+                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss']],
+                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score']],
+                experiment='eval_performance_degradation_on_retain_set'
+            )
+
+        return {
+            'experiment': 'eval_performance_degradation',
+            # 'top-K value': self.config.topK,
+            'eval data': 'retain_set',
+            'before masking loss': before_masking_eval_metrics['test loss'],
+            'after masking loss': after_masking_eval_metrics['test loss'],
+            'before masking score': before_masking_eval_metrics['score'],
+            'after masking score': after_masking_eval_metrics['score']
+        }
+
+    def eval_mask_efficacy(self) -> Dict:
+        """Eval whether mask identified weights important for predicting desired forget class."""
+
+        logger.info('..... eval mask efficacy .....')
+
+        before_masking_eval_metrics = self.inference(
+            description='no masking on forget set',
             model=self.classifier,
             data_loader=self.mnist_forget_set(),
             is_forget_set=True
         )
-        self.inference(
-            model=self.classifier,
-            data_loader=self.mnist_retain_set(),
-            is_forget_set=False
+
+        after_masking_eval_metrics = self.inference(
+            description='pure class mask on forget set',
+            model=self.model_mask_forget_class(),
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=True
         )
 
-        # # study mask efficacy
-        # self.inference(
-        #     model=self.model_mask_forget_class(),
-        #     data_loader=self.mnist_forget_set(),
-        #     is_forget_set=True
-        # )
-        
-        # self.inference(
-        #     model=self.classifier,
-        #     data_loader=self.mnist_forget_set(),
-        #     is_forget_set=True
-        # )
+        if self.draw_eval_plots:
+
+            self.draw_visualization(
+                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss']],
+                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score']],
+                experiment='eval_performance_degradation_on_foget_set'
+            )
+
+        return {
+            'experiment': 'eval_performance_degradation',
+            # 'top-K value': self.config.topK,
+            'eval data': 'forget_set',
+            'before masking loss': before_masking_eval_metrics['test loss'],
+            'after masking loss': after_masking_eval_metrics['test loss'],
+            'before masking score': before_masking_eval_metrics['score'],
+            'after masking score': after_masking_eval_metrics['score']
+        }
+    
+    def eval(self, save_metrics: bool = True) -> Dict:
+        unlearning_metrics = self.eval_unlearning()
+        performance_degradation_metrics = self.eval_performance_degradation()
+        mask_efficacy_metrics = self.eval_mask_efficacy()
+        metrics = {
+            'id': str(uuid.uuid1()),
+            'forget_digit': self.config.forget_digit,
+            'num_graph_vertices': self.graph_generator.num_vertices,
+            'num_graph_edges': self.graph_generator.edge_matrix.shape[1],
+            'maked_layer': self.config.mask_layer,
+            'top_k_value': self.config.topK,
+            'unlearning_metrics': unlearning_metrics,
+            'performance_degradation_metrics': performance_degradation_metrics,
+            'mask_efficacy_metrics': mask_efficacy_metrics
+        }
+        if save_metrics:
+            self.config.metrics_path.mkdir(exist_ok=True, parents=True)
+            file_path = self.config.metrics_path / f'top-{self.config.topK}.jsonl'
+            with open(file_path, 'a') as f:
+                f.write(json.dumps(metrics) + '\n')
+
+        return metrics
 
 if __name__ == '__main__':
     config = EvalConfig()
     eval = Eval(config)
-    eval.eval()
+    metrics = eval.eval()
