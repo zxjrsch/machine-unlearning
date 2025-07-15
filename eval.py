@@ -135,7 +135,10 @@ class Eval:
 
     def get_masked_model(self, custom_mask: Union[Tensor, None]=None) -> HookedMNISTClassifier:
         """Single layer masking."""
-        mask: Tensor = self.get_model_mask()
+        if custom_mask is None:
+            mask: Tensor = self.get_model_mask()
+        else:
+            mask = custom_mask
         mask = mask.to(self.config.device)
         weight_vector = self.graph_generator.weight_feature.to(self.config.device)
         layer_vect = torch.mul(mask, weight_vector)
