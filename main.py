@@ -30,8 +30,8 @@ def generate_graph(checkpoint_path):
     # this saves data in batches
     dg.save_forward_backward_features(limit=2048)
 
-def train_gcn(src_checkpoint):
-    config = GCNTrainerConfig(src_checkpoint=src_checkpoint, mask_K=2500)
+def train_gcn(src_checkpoint, topK=2500):
+    config = GCNTrainerConfig(src_checkpoint=src_checkpoint, mask_K=topK)
     trainer = GCNTrainer(config=config)
     ckpt_path = trainer.train()
     return ckpt_path
@@ -44,9 +44,9 @@ def train_gcn(src_checkpoint):
     # for i in range(5):
     #     data_loader.next()
 
-def evaluation(gcn_path, classifier_path):
+def evaluation(gcn_path, classifier_path, topK=2500):
     # for real usecase 
-    config = EvalConfig(gcn_path=gcn_path, classifier_path=classifier_path)
+    config = EvalConfig(gcn_path=gcn_path, classifier_path=classifier_path, topK=topK)
     eval = Eval(config)
     return eval.eval()
 
@@ -55,8 +55,10 @@ def main():
     # checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
     classifier_checkpoint_path = train_mnist_classifier()
     generate_graph(checkpoint_path=classifier_checkpoint_path)
-    gcn_checkpoint_path = train_gcn(classifier_checkpoint_path)
-    metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path)
+
+    for topK in [100, 500, 1000, 2000, 2500, 3000, 3500]:
+        gcn_checkpoint_path = train_gcn(classifier_checkpoint_path, topK=topK)
+        metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK)
 
 
 if __name__ == "__main__":

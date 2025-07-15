@@ -33,7 +33,7 @@ class EvalConfig:
     batch_size = 16
     device = global_config.device
     mask_layer = -2
-    topK = 2500
+    topK:int = 2500
 
 class Eval:
     def __init__(self, config: EvalConfig, draw_eval_plots: bool=True):
@@ -150,6 +150,12 @@ class Eval:
         model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
         model.load_state_dict(state_dict)
         return model
+
+    def get_randomly_masked_model(self) -> HookedMNISTClassifier:
+        mask = torch.zeros(self.graph_generator.num_vertices, dtype=torch.float32)
+        indices = torch.randperm(self.graph_generator.num_vertices)[:self.config.topK]
+        mask[indices] = 1
+        return self.get_masked_model(custom_mask=mask)
     
     def inference(self, model: HookedMNISTClassifier, data_loader: DataLoader, is_forget_set: bool = True, description: str = None) -> Any:
         model = model.to(self.config.device)
@@ -182,7 +188,7 @@ class Eval:
         }
     
     def draw_visualization(self, loss: List[float], score: List[float], experiment: str = '') -> None:
-        categories = ['Before Masking', 'After Masking']
+        categories = ['Before Masking', 'After Masking', 'Random']
 
         fig, axs = plt.subplots(1, 2, figsize=(10, 4))  # 1 row, 2 columns
 
@@ -195,6 +201,7 @@ class Eval:
         axs[1].bar(categories, score, color='blue')
         axs[1].set_title('Score')
         axs[1].set_ylabel('Score')
+
         plt.suptitle(f'{experiment} (top-{self.config.topK})')
         plt.tight_layout()
 
@@ -221,11 +228,19 @@ class Eval:
             is_forget_set=True
         )
 
+        random_baseline_eval_metrics = self.inference(
+            description='random on forget set',
+            model=self.get_randomly_masked_model(),
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=True
+        )
+
+
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss']],
-                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score']],
+                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss'], random_baseline_eval_metrics['test loss']],
+                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
                 experiment='eval_unlearning_on_forget_set'
             )
 
@@ -258,11 +273,18 @@ class Eval:
             is_forget_set=False
         )
 
+        random_baseline_eval_metrics = self.inference(
+            description='random on retain set',
+            model=self.get_randomly_masked_model(),
+            data_loader=self.mnist_retain_set(),
+            is_forget_set=False
+        )
+
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss']],
-                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score']],
+                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss'], random_baseline_eval_metrics['test loss']],
+                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
                 experiment='eval_performance_degradation_on_retain_set'
             )
 
@@ -295,12 +317,19 @@ class Eval:
             is_forget_set=True
         )
 
+        random_baseline_eval_metrics = self.inference(
+            description='random forget set',
+            model=self.get_randomly_masked_model(),
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=True
+        )
+
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss']],
-                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score']],
-                experiment='eval_performance_degradation_on_foget_set'
+                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss'], random_baseline_eval_metrics['test loss']],
+                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
+                experiment='eval_mask_efficacy_on_foget_set'
             )
 
         return {
@@ -312,6 +341,7 @@ class Eval:
             'before masking score': before_masking_eval_metrics['score'],
             'after masking score': after_masking_eval_metrics['score']
         }
+
     
     def eval(self, save_metrics: bool = True) -> Dict:
         unlearning_metrics = self.eval_unlearning()
