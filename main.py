@@ -56,7 +56,7 @@ def main():
     classifier_checkpoint_path = train_mnist_classifier()
     generate_graph(checkpoint_path=classifier_checkpoint_path)
 
-    for topK in [100, 500, 1000, 2000, 2500, 3000, 3500]:
+    for topK in range(1, 9001, 1000):
         gcn_checkpoint_path = train_gcn(classifier_checkpoint_path, topK=topK)
         metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK)
 

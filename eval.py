@@ -19,6 +19,7 @@ from torchvision.transforms import ToTensor
 from data import GraphGenerator
 from model import HookedMNISTClassifier, MaskingGCN
 from trainer import gumbel_top_k_sampling_v2
+import torch.nn.functional as F
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -28,12 +29,13 @@ class EvalConfig:
     classifier_path: Path # = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
     data_path: Path = Path('datasets')
     graph_data_path: Path = Path('eval/Graphs')
-    metrics_path: Path = Path('eval/Metrics')
+    metrics_path: Path = Path('eval/Metrics and Plots')
     forget_digit = 9
     batch_size = 16
     device = global_config.device
     mask_layer = -2
     topK:int = 2500
+    plot_category_probabilities: bool = True
 
 class Eval:
     def __init__(self, config: EvalConfig, draw_eval_plots: bool=True):
@@ -156,7 +158,9 @@ class Eval:
 
     def get_randomly_masked_model(self) -> HookedMNISTClassifier:
         mask = torch.zeros(self.graph_generator.num_vertices, dtype=torch.float32)
-        indices = torch.randperm(self.graph_generator.num_vertices)[:self.config.topK]
+        num_1s = self.graph_generator.num_vertices - self.config.topK
+        assert num_1s > 0
+        indices = torch.randperm(self.graph_generator.num_vertices)[:num_1s]
         mask[indices] = 1
         return self.get_masked_model(custom_mask=mask)
     
@@ -167,11 +171,34 @@ class Eval:
         test_loss, num_batches = 0, len(data_loader)
         score, total = 0, len(data_loader.dataset)
         with torch.no_grad():
+            mean_prob = None
+            plotted = False # generate one plot per inference
             for i, (input, target) in enumerate(data_loader):
                 input = input.to(self.config.device)
                 target = target.to(self.config.device)
                 
                 preds: torch.Tensor = model(input)
+
+                if self.config.plot_category_probabilities and not plotted and is_forget_set:
+                    # the mean probability is only meaningful over a single class, which is why we check is_forget_set
+                    probs: List[float] = F.softmax(preds, dim=-1).mean(dim=0).tolist()
+                    mean_prob = probs[self.config.forget_digit] 
+                    fig, ax = plt.subplots()
+                    plt.figure(figsize=(10, 6))
+                    plt.bar(range(10), probs, tick_label=[str(i) for i in range(10)])
+                    save_path = self.config.metrics_path / f'probabilities/{description}/'
+                    save_path.mkdir(parents=True, exist_ok=True)
+                    save_path = save_path / f'top_k_{self.config.topK}.png'
+
+                    plt.xlabel('Class')
+                    plt.ylabel('Probability')
+                    plt.title(f'Classifier Probabilities ({description})')
+                    plt.xticks(range(10))
+                    plt.ylim(0, 1)
+                    plt.savefig(save_path)
+                    plotted = True
+
+                
                 test_loss += self.graph_generator.loss_fn(preds, target).item()
                 score += (preds.argmax(1) == target).type(torch.float).sum().item()
 
@@ -183,12 +210,17 @@ class Eval:
         eval_set = 'forget set' if is_forget_set else 'retain set'
         logger.info(f'Exp: {description} | Test loss on {eval_set} {test_loss} | Score {score} %')
 
-        return {
+        metrics =  {
             'experiment': description,
             'eval data': eval_set,
             'test loss': test_loss,
-            'score': score
+            'score': score,
         }
+
+        if is_forget_set:
+            metrics['mean_classifier_probability_on_forget_digit'] = mean_prob
+
+        return metrics
     
     def draw_visualization(self, loss: List[float], score: List[float], experiment: str = '') -> None:
         categories = ['Before Masking', 'After Masking', 'Random']
