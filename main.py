@@ -8,10 +8,10 @@ from loguru import logger
 from data import GraphGenerator
 from eval import Eval, EvalConfig
 from model import HookedMNISTClassifier
+from reporter import Reporter, ReporterConfig
 from trainer import (GCNTrainer, GCNTrainerConfig, GraphDataLoader, Trainer,
                      TrainerConfig)
 
-from reporter import ReporterConfig, Reporter
 
 def train_mnist_classifier():
     config = TrainerConfig()

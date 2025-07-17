@@ -210,7 +210,7 @@ class Eval:
                 test_loss += self.graph_generator.loss_fn(preds, target).item()
                 score += (classifier_probs.argmax(1) == target).type(torch.float).sum().item()
 
-                logger.info(f'@@@@@ Predictions {classifier_probs.tolist()[0]} | Argmax: {preds.argmax(1)[0]} | Forget digit {self.config.forget_digit} @@@@@')
+                # logger.info(f'@@@@@ Predictions {classifier_probs.tolist()[0]} | Argmax: {preds.argmax(1)[0]} | Forget digit {self.config.forget_digit} @@@@@')
 
             test_loss /= num_batches
             test_loss = round(test_loss, 5)
@@ -255,6 +255,7 @@ class Eval:
         save_path.mkdir(parents=True, exist_ok=True)
         save_path = save_path / f'top_{self.config.topK}.png'
         plt.savefig(save_path)
+        plt.close()
 
     def eval_unlearning(self) -> Dict:
         """Evaluate model before and after MIMU masking on forget set."""
