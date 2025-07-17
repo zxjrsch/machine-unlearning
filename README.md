@@ -10,7 +10,7 @@ mimu/
 ├── main.py         # entry point
 ├── model.py        # contains GCN and hooked models
 ├── trainer.py      # manages training
-├── visualize.py    # plotting 
+├── reporter.py     # plotting 
 ```
 
 ### Artifacts 

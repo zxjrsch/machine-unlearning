@@ -108,6 +108,7 @@ class Trainer:
                 
                 preds: torch.Tensor = self.model(input)
                 test_loss += self.criterion(preds, target).item()
+                
                 score += (preds.argmax(1) == target).type(torch.float).sum().item()
 
             test_loss /= num_batches

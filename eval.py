@@ -185,10 +185,11 @@ class Eval:
                 target = target.to(self.config.device)
                 
                 preds: torch.Tensor = model(input)
+                classifier_probs: List[float] = F.softmax(preds, dim=-1)
 
                 if self.config.plot_category_probabilities and not plotted and is_forget_set:
                     # the mean probability is only meaningful over a single class, which is why we check is_forget_set
-                    probs: List[float] = F.softmax(preds, dim=-1).mean(dim=0).tolist()
+                    probs: List[float] = classifier_probs.mean(dim=0).tolist()
                     mean_prob = probs[self.config.forget_digit] 
                     fig, ax = plt.subplots()
                     plt.figure(figsize=(10, 6))
@@ -207,7 +208,9 @@ class Eval:
 
                 
                 test_loss += self.graph_generator.loss_fn(preds, target).item()
-                score += (preds.argmax(1) == target).type(torch.float).sum().item()
+                score += (classifier_probs.argmax(1) == target).type(torch.float).sum().item()
+
+                logger.info(f'@@@@@ Predictions {classifier_probs.tolist()[0]} | Argmax: {preds.argmax(1)[0]} | Forget digit {self.config.forget_digit} @@@@@')
 
             test_loss /= num_batches
             test_loss = round(test_loss, 5)
@@ -252,7 +255,6 @@ class Eval:
         save_path.mkdir(parents=True, exist_ok=True)
         save_path = save_path / f'top_{self.config.topK}.png'
         plt.savefig(save_path)
-        plt.show()
 
     def eval_unlearning(self) -> Dict:
         """Evaluate model before and after MIMU masking on forget set."""

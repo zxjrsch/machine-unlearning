@@ -11,6 +11,7 @@ from model import HookedMNISTClassifier
 from trainer import (GCNTrainer, GCNTrainerConfig, GraphDataLoader, Trainer,
                      TrainerConfig)
 
+from reporter import ReporterConfig, Reporter
 
 def train_mnist_classifier():
     config = TrainerConfig()
@@ -50,6 +51,11 @@ def evaluation(gcn_path, classifier_path, topK=2500):
     eval = Eval(config)
     return eval.eval()
 
+def viz():
+    config = ReporterConfig()
+    reporter = Reporter(config)
+    reporter.plot()
+
 def main():
 
     logger.info(f'-------- Training Classifier -------')
@@ -68,6 +74,7 @@ def main():
         metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK)
         logger.info(f'------- Completed top-{topK} experiment ------')
 
+    viz()
     logger.info(f'-------- Experiment Complete -------')
 
 
