@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import torch
+import torch.nn.functional as F
 from loguru import logger
 from omegaconf import OmegaConf
 from torch import Tensor
@@ -19,7 +20,6 @@ from torchvision.transforms import ToTensor
 from data import GraphGenerator
 from model import HookedMNISTClassifier, MaskingGCN
 from trainer import gumbel_top_k_sampling_v2
-import torch.nn.functional as F
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -208,12 +208,12 @@ class Eval:
             score = round(100*score, 1) # percentage
 
         eval_set = 'forget set' if is_forget_set else 'retain set'
-        logger.info(f'Exp: {description} | Test loss on {eval_set} {test_loss} | Score {score} %')
+        logger.info(f'Exp: {description} | test_loss on {eval_set} {test_loss} | Score {score} %')
 
         metrics =  {
             'experiment': description,
             'eval data': eval_set,
-            'test loss': test_loss,
+            'test_loss': test_loss,
             'score': score,
         }
 
@@ -229,7 +229,7 @@ class Eval:
 
         # Plot loss
         axs[0].bar(categories, loss, color='blue')
-        axs[0].set_title('Test Loss')
+        axs[0].set_title('test_loss')
         axs[0].set_ylabel('Loss')
 
         # Plot score
@@ -241,7 +241,9 @@ class Eval:
         plt.tight_layout()
 
         self.config.metrics_path.mkdir(parents=True, exist_ok=True)
-        save_path = self.config.metrics_path / f'{experiment}_top_{self.config.topK}.png'
+        save_path = self.config.metrics_path / f'{experiment}/'
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_path = save_path / f'top_{self.config.topK}.png'
         plt.savefig(save_path)
         plt.show()
 
@@ -274,7 +276,7 @@ class Eval:
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss'], random_baseline_eval_metrics['test loss']],
+                loss=[before_masking_eval_metrics['test_loss'], after_masking_eval_metrics['test_loss'], random_baseline_eval_metrics['test_loss']],
                 score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
                 experiment='eval_unlearning_on_forget_set'
             )
@@ -283,10 +285,20 @@ class Eval:
             'experiment': 'eval_unlearning',
             # 'top-K value': self.config.topK,
             'eval data': 'forget_set',
-            'before masking loss': before_masking_eval_metrics['test loss'],
-            'after masking loss': after_masking_eval_metrics['test loss'],
-            'before masking score': before_masking_eval_metrics['score'],
-            'after masking score': after_masking_eval_metrics['score']
+
+            'before_masking_loss': before_masking_eval_metrics['test_loss'],
+            'before_masking_score': before_masking_eval_metrics['score'],
+            'before_mask_probability': before_masking_eval_metrics['mean_classifier_probability_on_forget_digit'],
+
+            'after_masking_loss': after_masking_eval_metrics['test_loss'],
+            'after_masking_score': after_masking_eval_metrics['score'],
+            'after_mask_probability': after_masking_eval_metrics['mean_classifier_probability_on_forget_digit'],
+
+            'random_masking_loss': random_baseline_eval_metrics['test_loss'],
+            'random_masking_score': random_baseline_eval_metrics['score'],
+            'random_masking_probability': random_baseline_eval_metrics['mean_classifier_probability_on_forget_digit'],
+
+
         }
 
     def eval_performance_degradation(self) -> Dict:
@@ -318,7 +330,7 @@ class Eval:
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss'], random_baseline_eval_metrics['test loss']],
+                loss=[before_masking_eval_metrics['test_loss'], after_masking_eval_metrics['test_loss'], random_baseline_eval_metrics['test_loss']],
                 score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
                 experiment='eval_performance_degradation_on_retain_set'
             )
@@ -327,10 +339,15 @@ class Eval:
             'experiment': 'eval_performance_degradation',
             # 'top-K value': self.config.topK,
             'eval data': 'retain_set',
-            'before masking loss': before_masking_eval_metrics['test loss'],
-            'after masking loss': after_masking_eval_metrics['test loss'],
-            'before masking score': before_masking_eval_metrics['score'],
-            'after masking score': after_masking_eval_metrics['score']
+
+            'before_masking_loss': before_masking_eval_metrics['test_loss'],
+            'before_masking_score': before_masking_eval_metrics['score'],
+
+            'after_masking_loss': after_masking_eval_metrics['test_loss'],
+            'after_masking_score': after_masking_eval_metrics['score'],
+
+            'random_masking_loss': random_baseline_eval_metrics['test_loss'],
+            'random_masking_score': random_baseline_eval_metrics['score'],
         }
 
     def eval_mask_efficacy(self) -> Dict:
@@ -362,7 +379,7 @@ class Eval:
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test loss'], after_masking_eval_metrics['test loss'], random_baseline_eval_metrics['test loss']],
+                loss=[before_masking_eval_metrics['test_loss'], after_masking_eval_metrics['test_loss'], random_baseline_eval_metrics['test_loss']],
                 score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
                 experiment='eval_mask_efficacy_on_foget_set'
             )
@@ -371,10 +388,15 @@ class Eval:
             'experiment': 'eval_performance_degradation',
             # 'top-K value': self.config.topK,
             'eval data': 'forget_set',
-            'before masking loss': before_masking_eval_metrics['test loss'],
-            'after masking loss': after_masking_eval_metrics['test loss'],
-            'before masking score': before_masking_eval_metrics['score'],
-            'after masking score': after_masking_eval_metrics['score']
+
+            'before_masking_loss': before_masking_eval_metrics['test_loss'],
+            'before_masking_score': before_masking_eval_metrics['score'],
+            
+            'after_masking_loss': after_masking_eval_metrics['test_loss'],
+            'after_masking_score': after_masking_eval_metrics['score'],
+
+            'random_masking_loss': random_baseline_eval_metrics['test_loss'],
+            'random_masking_score': random_baseline_eval_metrics['score'],
         }
 
     
@@ -395,7 +417,9 @@ class Eval:
         }
         if save_metrics:
             self.config.metrics_path.mkdir(exist_ok=True, parents=True)
-            file_path = self.config.metrics_path / f'top-{self.config.topK}.jsonl'
+            file_path = self.config.metrics_path / 'metrics'
+            file_path.mkdir(exist_ok=True, parents=True)
+            file_path = file_path / f'top-{self.config.topK}.json'
             with open(file_path, 'a') as f:
                 f.write(json.dumps(metrics) + '\n')
 

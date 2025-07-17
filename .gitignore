@@ -14,5 +14,6 @@ datasets/
 checkpoints/
 eval/
 outputs/
+reports/
 uv.lock
 .pytest_cache/

@@ -87,7 +87,7 @@ class Trainer:
                 adam_optimizer.zero_grad()
 
                 if j % self.config.logging_steps == 0:
-                    logger.info(f'Epoch {i+1} | Step {j} | Loss {round(train_loss.item(), 2)}')
+                    logger.info(f'Epoch {i+1} | Step {j} | Classifier loss {round(train_loss.item(), 2)}')
                     self.val()
                     self.model.train()
 
@@ -144,7 +144,7 @@ class GCNTrainerConfig:
     gcn_checkpoint_path: Path = Path('checkpoints/gcn')
     lr=0.01
     weight_decay=5e-4
-    steps=32
+    steps=128
     mask_layer: Union[None, int] = -2
     mask_K: Union[int, Percentage] = 2_500 # number of parameters to keep or some Percentage of the model/layer 
     device = global_config.device
@@ -271,7 +271,9 @@ class GCNTrainer:
 
     def get_prior_distribution(self) -> Categorical:
         assert self.weight_vector is not None
-        probs = torch.abs(self.weight_vector) / torch.linalg.vector_norm(self.weight_vector, ord=1)
+        weight_vector = self.weight_vector.detach().clone()
+        assert not weight_vector.requires_grad
+        probs = torch.abs(weight_vector) / torch.linalg.vector_norm(weight_vector, ord=1)
         probs = probs.to(self.device)
         return Categorical(probs=probs)
     
@@ -315,12 +317,11 @@ class GCNTrainer:
             
             loss /= batch_size  # prevent exploding gradients while optimizing same objective
 
-            # 2x check retain_graph setting
-            loss.backward(retain_graph=True)
+            loss.backward()
             adam_optimizer.step()
             adam_optimizer.zero_grad()
             if s % 10 == 0:
-                logger.info(f'Step {s} | loss {loss.item()}')
+                logger.info(f'Step {s} | GCN loss {loss.item()}')
         
         ckpt_path = self.checkpoint()
         logger.info(f'GCN checkpoint saved at {ckpt_path}')

@@ -1,1 +1,1 @@
-rm -rf checkpoints eval
+rm -rf checkpoints eval reports

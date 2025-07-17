@@ -1,0 +1,42 @@
+{
+    "id": "524da1aa-631e-11f0-acc9-4925545d526b",
+    "forget_digit": 9,
+    "num_graph_vertices": 8192,
+    "num_graph_edges": 1556480,
+    "maked_layer": -2,
+    "top_k_value": 1,
+    "unlearning_metrics": {
+        "experiment": "eval_unlearning",
+        "eval data": "forget_set",
+        "before masking loss": 16546656.84375,
+        "before masking score": 0.0,
+        "before mask probability": 0.0,
+        "after masking loss": 16546656.84375,
+        "after masking score": 0.0,
+        "after_mask_probability": 0.0,
+        "random masking loss": 16546656.84375,
+        "random masking score": 0.0,
+        "random masking probability": 0.0
+    },
+    "performance_degradation_metrics": {
+        "experiment": "eval_performance_degradation",
+        "eval data": "retain_set",
+        "before masking loss": 11819071.8194,
+        "before masking score": 14.9,
+        "after masking loss": 11819071.8194,
+        "after masking score": 14.9,
+        "random masking loss": 11750043.89235,
+        "random masking score": 14.9
+    },
+    "mask_efficacy_metrics": {
+        "experiment": "eval_performance_degradation",
+        "eval data": "forget_set",
+        "before masking loss": 16546656.84375,
+        "before masking score": 0.0,
+        "after masking loss": 2497.70148,
+        "after masking score": 0.0,
+        "random masking loss": 16546656.84375,
+        "random masking score": 0.0,
+        "random masking probability": 0.0
+    }
+}

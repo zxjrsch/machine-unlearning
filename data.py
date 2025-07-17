@@ -7,6 +7,7 @@ import torch
 from loguru import logger
 from omegaconf import OmegaConf
 from torch import Tensor, nn
+from torch.nn.functional import normalize
 from torch.nn.parameter import Parameter
 from torch.utils.data import DataLoader
 from torch_geometric.data import Data
@@ -425,7 +426,13 @@ class GraphGenerator(ModelInspector):
             gradients: Tensor = self.flatten_and_zero_grad()
 
             # dim = [num_vertices, num_features] 
+            in_feature = self.mean_var_nomralize(in_feature)
+            out_feature = self.mean_var_nomralize(out_feature)
+            weight_feature = self.mean_var_nomralize(self.weight_feature)
+            gradient_feature = self.mean_var_nomralize(gradients)
+
             graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
+            # logger.info(f'Vector norm {torch.linalg.vector_norm(graph_feature_matrix[0])}, {torch.linalg.vector_norm(graph_feature_matrix[1])}, {torch.linalg.vector_norm(graph_feature_matrix[2])}, {torch.linalg.vector_norm(graph_feature_matrix[3])}')
             
             # # tracer
             # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
@@ -470,6 +477,9 @@ class GraphGenerator(ModelInspector):
             del feature_batch, input_batch, target_batch
             self.model.reset_activations()
             torch.cuda.empty_cache()
+    
+    def mean_var_nomralize(self, feature_vector: Tensor) -> Tensor:
+        return (feature_vector - feature_vector.mean()) / (feature_vector.std() + 1e-8)
 
     def get_data(self, idx: int=0) -> Tuple[Any, Any, Data]:
         """Generate target and PyG graph data"""
@@ -494,7 +504,12 @@ class GraphGenerator(ModelInspector):
                 gradients: Tensor = self.flatten_and_zero_grad()
 
                 # dim = [num_vertices, num_features]
-                graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
+                in_feature = self.mean_var_nomralize(in_feature)
+                out_feature = self.mean_var_nomralize(out_feature)
+                weight_feature = self.mean_var_nomralize(self.weight_feature)
+                gradient_feature = self.mean_var_nomralize(gradients)
+
+                graph_feature_matrix = torch.column_stack((in_feature, out_feature, weight_feature, gradient_feature))
                 
                 # # tracer
                 # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
@@ -531,8 +546,12 @@ class GraphGenerator(ModelInspector):
             gradients: Tensor = self.flatten_and_zero_grad()
 
             # dim = [num_vertices, num_features] 
-            graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))
-            
+            in_feature = self.mean_var_nomralize(in_feature)
+            out_feature = self.mean_var_nomralize(out_feature)
+            weight_feature = self.mean_var_nomralize(self.weight_feature)
+            gradient_feature = self.mean_var_nomralize(gradients)
+
+            graph_feature_matrix = torch.column_stack((in_feature, out_feature, self.weight_feature, gradients))            
             # # tracer
             # logger.info(f'{in_feature.shape} | {out_feature.shape} | {self.weight_feature.shape} | {gradients.shape}')
             # logger.info(graph_feature_matrix.shape)

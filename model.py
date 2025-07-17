@@ -178,7 +178,7 @@ class MaskingGCNConv(MessagePassing):
 
 class MaskingGCN(nn.Module):
 
-    def __init__(self, num_node_features=4, num_message_passing_rounds=3, hidden_dim=32, use_deg_avg=False, output_logits=True):
+    def __init__(self, num_node_features=4, num_message_passing_rounds=3, hidden_dim=32, use_deg_avg=False, output_logits=True, use_relu=False):
         """
         Current node features:
             1) weight
@@ -198,6 +198,7 @@ class MaskingGCN(nn.Module):
         super().__init__()
 
         self.output_logits = output_logits
+        self.use_relu = use_relu
 
         self.proj_in = MaskingGCNConv(num_node_features, hidden_dim)
 
@@ -220,7 +221,11 @@ class MaskingGCN(nn.Module):
 
         x = self.proj_in(x, edge_index)
         for conv_layer in self.conv.values():
-            x = F.softmax(conv_layer(x, edge_index), dim=1)
+            x = conv_layer(x, edge_index)
+            if self.use_relu:
+                x = F.relu(x)
+            else:
+                x = F.sigmoid(x)
 
         if self.output_logits:
             return self.proj_out(x).squeeze()
