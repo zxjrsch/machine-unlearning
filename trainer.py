@@ -283,7 +283,7 @@ class GCNTrainer:
         self.gcn.train()
 
         # logger.info(f'====== GCN training for top-{self.config.mask_K} MIMU masking | Mask layer: {self.config.mask_layer} =====')
-
+        final_loss = 0
         for s in range(self.config.steps):
             gcn_batch, edge_matrix = self.graph_data_loader.next()
 
@@ -324,10 +324,10 @@ class GCNTrainer:
             adam_optimizer.zero_grad()
             if s % 10 == 0:
                 logger.info(f'Step {s} | GCN loss {loss.item()}')
-        
+            final_loss = loss.item()
         ckpt_path = self.checkpoint()
         logger.info(f'GCN checkpoint saved at {ckpt_path}')
-        logger.info('GCN Training complete.')
+        logger.info(f'GCN Training complete with final loss {final_loss}')
         return ckpt_path
     
     def checkpoint(self) -> Path:

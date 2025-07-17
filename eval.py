@@ -122,9 +122,16 @@ class Eval:
             else:
                 retain_mask = mask if retain_mask is None else retain_mask + mask
 
+        # weights important for forget set prediction but not important for retain classes correspond to 1s
         mask = torch.clamp(forget_mask - retain_mask, min=0)
 
-        # return 1 for weight values which are are important to predict retain set but not forget data
+        # negation operation return True for weight values which are are important to predict RETAIN set but not forget data
+        mask = mask == 0
+        num_keep_weights = mask.sum().item()
+        percent = round(num_keep_weights/self.graph_generator.num_vertices * 100, 2)
+
+        logger.info(f'top-{self.config.topK} | target layer {self.config.mask_layer} | Retaining {num_keep_weights} ({percent} %)')
+
         return (mask == 0).float()
     
     def model_mask_forget_class(self) -> HookedMNISTClassifier:
