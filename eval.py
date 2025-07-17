@@ -212,7 +212,7 @@ class Eval:
 
         metrics =  {
             'experiment': description,
-            'eval data': eval_set,
+            'eval_data': eval_set,
             'test_loss': test_loss,
             'score': score,
         }
@@ -284,7 +284,7 @@ class Eval:
         return {
             'experiment': 'eval_unlearning',
             # 'top-K value': self.config.topK,
-            'eval data': 'forget_set',
+            'eval_data': 'forget_set',
 
             'before_masking_loss': before_masking_eval_metrics['test_loss'],
             'before_masking_score': before_masking_eval_metrics['score'],
@@ -338,7 +338,7 @@ class Eval:
         return {
             'experiment': 'eval_performance_degradation',
             # 'top-K value': self.config.topK,
-            'eval data': 'retain_set',
+            'eval_data': 'retain_set',
 
             'before_masking_loss': before_masking_eval_metrics['test_loss'],
             'before_masking_score': before_masking_eval_metrics['score'],
@@ -387,7 +387,7 @@ class Eval:
         return {
             'experiment': 'eval_performance_degradation',
             # 'top-K value': self.config.topK,
-            'eval data': 'forget_set',
+            'eval_data': 'forget_set',
 
             'before_masking_loss': before_masking_eval_metrics['test_loss'],
             'before_masking_score': before_masking_eval_metrics['score'],
