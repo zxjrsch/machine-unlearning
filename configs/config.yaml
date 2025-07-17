@@ -1,1 +1,2 @@
 device: 'cuda:1'
+gcn_train_steps: 130

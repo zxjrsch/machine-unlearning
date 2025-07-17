@@ -144,7 +144,7 @@ class GCNTrainerConfig:
     gcn_checkpoint_path: Path = Path('checkpoints/gcn')
     lr=0.01
     weight_decay=5e-4
-    steps=128
+    steps=global_config.gcn_train_steps
     mask_layer: Union[None, int] = -2
     mask_K: Union[int, Percentage] = 2_500 # number of parameters to keep or some Percentage of the model/layer 
     device = global_config.device
@@ -281,6 +281,8 @@ class GCNTrainer:
         adam_optimizer = torch.optim.Adam(self.gcn.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
         self.gcn = self.gcn.to(self.device)
         self.gcn.train()
+
+        # logger.info(f'====== GCN training for top-{self.config.mask_K} MIMU masking | Mask layer: {self.config.mask_layer} =====')
 
         for s in range(self.config.steps):
             gcn_batch, edge_matrix = self.graph_data_loader.next()

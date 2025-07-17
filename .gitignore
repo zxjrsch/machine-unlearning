@@ -10,6 +10,8 @@ wheels/
 # Virtual environments
 .venv
 
+dummy.json
+babysit_run.log
 datasets/
 checkpoints/
 eval/

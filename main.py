@@ -52,13 +52,23 @@ def evaluation(gcn_path, classifier_path, topK=2500):
 
 def main():
 
+    logger.info(f'-------- Training Classifier -------')
     # checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
     classifier_checkpoint_path = train_mnist_classifier()
+
+    logger.info(f'-------- Generating GCN Training Data -------')
     generate_graph(checkpoint_path=classifier_checkpoint_path)
 
-    for topK in range(1, 9001, 1000):
+    i = 0
+    topK_array = list(range(1, 9001, 1000))
+    for topK in topK_array:
+        i += 1
+        logger.info(f'------- Starting exp {i} of {len(topK_array)} | top-{topK}  ------')
         gcn_checkpoint_path = train_gcn(classifier_checkpoint_path, topK=topK)
         metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK)
+        logger.info(f'------- Completed top-{topK} experiment ------')
+
+    logger.info(f'-------- Experiment Complete -------')
 
 
 if __name__ == "__main__":
