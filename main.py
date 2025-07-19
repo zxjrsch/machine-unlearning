@@ -66,7 +66,8 @@ def main():
     generate_graph(checkpoint_path=classifier_checkpoint_path)
 
     i = 0
-    topK_array = list(range(1, 9001, 1000))
+    topK_array = list(range(1, 9002, 1000))
+    topK_array = [5000, 6000]
     for topK in topK_array:
         i += 1
         logger.info(f'------- Starting exp {i} of {len(topK_array)} | top-{topK}  ------')

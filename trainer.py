@@ -385,7 +385,8 @@ def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
 
 @dataclass
 class UnlearningSFTConfig:
-    original_model_path: Path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
+    init_model: Union[HookedMNISTClassifier, None] = None # if None, model will load from path
+    original_model_path: Union[Path, None] = None # Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
     save_dir: Path = Path('checkpoints/finetuned_mnist_classifier')
     data_dir: Path = Path('datasets')
     finetune_layer: int = -2
@@ -406,9 +407,13 @@ class UnlearningSFT:
 
     def load_forzen_model(self) -> HookedMNISTClassifier:
         """Freezes all layers except finetuning layer."""
-        model: HookedMNISTClassifier = HookedMNISTClassifier()
-        model = torch.compile(model)
-        model.load_state_dict(torch.load(self.config.original_model_path, weights_only=True))
+
+        if self.config.init_model is None:
+            model: HookedMNISTClassifier = HookedMNISTClassifier()
+            model = torch.compile(model)
+            model.load_state_dict(torch.load(self.config.original_model_path, weights_only=True))
+        else: 
+            model = self.config.init_model
 
         # often target is specified like -2
         num_layers = sum([1 for layer in model.parameters() if layer.requires_grad])
@@ -429,7 +434,7 @@ class UnlearningSFT:
         batch_size = self.config.batch_size
         return self.sampling_distribution.sample((batch_size,))     
     
-    def finetune(self, save_checkpoint: bool = False) -> Path:
+    def finetune(self, save_checkpoint: bool = False) -> Union[Path, HookedMNISTClassifier]:
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
         loss_fn = nn.CrossEntropyLoss()
         self.model.train()
@@ -450,10 +455,13 @@ class UnlearningSFT:
             if step % self.config.logging_steps == 0:
                 logger.info(f'Finetuning step {step} | classifier loss {train_loss.item()}')
 
-        logger.info(f'Finetuning complete | classifier loss {train_loss.item()}')
+        logger.info(f'Finetuning complete | classifier loss wrt randomized target {train_loss.item()}')
 
-        path = self.checkpoint()
-        return path
+        if save_checkpoint:
+            path = self.checkpoint()
+            logger.info(f'Finetune checkpoint saved at {path}')
+
+        return self.model
     
     def mnist_forget_set(self) -> DataLoader:
         dataset = MNIST(root=self.config.data_dir, train=False, transform=ToTensor(), download=True)

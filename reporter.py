@@ -47,7 +47,7 @@ class Reporter:
                     self.classifier_no_intervention_stats['forget_set_loss'] = metrics['unlearning_metrics']['before_masking_loss']
                     self.classifier_no_intervention_stats['forget_set_score'] = metrics['unlearning_metrics']['before_masking_score']
                     self.classifier_no_intervention_stats['retain_set_loss'] = metrics['performance_degradation_metrics']['before_masking_loss']
-                    self.classifier_no_intervention_stats['retainpass_set_score'] = metrics['unlearning_metrics']['before_masking_score']
+                    self.classifier_no_intervention_stats['retain_set_score'] = metrics['unlearning_metrics']['before_masking_score']
                 else:
                     # sanity check 
                     assert self.mask_layer == metrics['maked_layer']
@@ -56,6 +56,7 @@ class Reporter:
                 topK.append(metrics['top_k_value'])
         return topK
     
+    ############ MIMU ############
     def get_mimu_retain_set_loss(self) -> List[float]:
         """Measures degradation as loss"""
         mimu_retain_loss = []
@@ -65,26 +66,6 @@ class Reporter:
                 l = metrics['performance_degradation_metrics']['after_masking_loss']
                 mimu_retain_loss.append(l)
         return mimu_retain_loss
-    
-    def get_mimu_forget_set_loss(self) -> List[float]:
-        """Measures unlearning as loss"""
-        mimu_forget_loss = []
-        for p in self.metrics_paths:
-            with open(p, 'r') as f:
-                metrics = json.loads(f.read().strip())
-                l = metrics['unlearning_metrics']['after_masking_loss']
-                mimu_forget_loss.append(l)
-        return mimu_forget_loss
-    
-    def get_mimu_forget_set_probability(self) -> List[float]:
-        """Measures unlearning as average probability of classifier evaluated on forget digit."""
-        mimu_forget_set_probability = []
-        for p in self.metrics_paths:
-            with open(p, 'r') as f:
-                metrics = json.loads(f.read().strip())
-                l = metrics['unlearning_metrics']['after_mask_probability']
-                mimu_forget_set_probability.append(l)
-        return mimu_forget_set_probability
     
     def get_mimu_retain_set_score(self) -> List[float]:
         """Measures degradation as percent score"""
@@ -96,6 +77,16 @@ class Reporter:
                 mimu_retain_score.append(l)
         return mimu_retain_score
     
+    def get_mimu_forget_set_loss(self) -> List[float]:
+        """Measures unlearning as loss"""
+        mimu_forget_loss = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['unlearning_metrics']['after_masking_loss']
+                mimu_forget_loss.append(l)
+        return mimu_forget_loss
+    
     def get_mimu_forget_set_score(self) -> List[float]:
         """Measures unlearning as percent score"""
         mimu_forget_score = []
@@ -105,8 +96,19 @@ class Reporter:
                 l = metrics['unlearning_metrics']['after_masking_score']
                 mimu_forget_score.append(l)
         return mimu_forget_score
+    
+    def get_mimu_forget_set_probability(self) -> List[float]:
+        """Measures unlearning as average probability of classifier evaluated on forget digit."""
+        mimu_forget_set_probability = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['unlearning_metrics']['after_mask_probability']
+                mimu_forget_set_probability.append(l)
+        return mimu_forget_set_probability
+    
 
-    # random baseline
+    ############ Random Baseline ############
     def get_random_masking_retain_set_loss(self) -> List[float]:
         """Measures degradation as loss"""
         random_retain_loss = []
@@ -117,7 +119,16 @@ class Reporter:
                 random_retain_loss.append(l)
         return random_retain_loss
     
-    # random baseline
+    def get_random_masking_retain_set_score(self) -> List[float]:
+        """Measures degradation as score"""
+        random_retain_score = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['performance_degradation_metrics']['after_masking_score']
+                random_retain_score.append(l)
+        return random_retain_score
+
     def get_random_masking_forget_set_loss(self) -> List[float]:
         """Measures degradation as loss"""
         random_forget_loss = []
@@ -128,40 +139,81 @@ class Reporter:
                 random_forget_loss.append(l)
         return random_forget_loss
     
-    # random baseline
     def get_random_masking_forget_set_score(self) -> List[float]:
         """Measures unlearning as score"""
-        random_retain_score = []
+        random_forget_score = []
         for p in self.metrics_paths:
             with open(p, 'r') as f:
                 metrics = json.loads(f.read().strip())
                 l = metrics['performance_degradation_metrics']['after_masking_score']
-                random_retain_score.append(l)
-        return random_retain_score
+                random_forget_score.append(l)
+        return random_forget_score
     
-    def get_random_masking_retain_set_score(self) -> List[float]:
-        """Measures degradation as score"""
-        random_retain_score = []
-        for p in self.metrics_paths:
-            with open(p, 'r') as f:
-                metrics = json.loads(f.read().strip())
-                l = metrics['performance_degradation_metrics']['after_masking_score']
-                random_retain_score.append(l)
-        return random_retain_score
-    
-    # random baseline
     def get_random_baseline_forget_set_probability(self) -> List[float]:
         """Measures unlearning as average probability of classifier evaluated on forget digit."""
-        mimu_forget_set_probability = []
+        random_baseline_forget_set_probability = []
         for p in self.metrics_paths:
             with open(p, 'r') as f:
                 metrics = json.loads(f.read().strip())
                 l = metrics['unlearning_metrics']['random_masking_probability']
-                mimu_forget_set_probability.append(l)
-        return mimu_forget_set_probability
+                random_baseline_forget_set_probability.append(l)
+        return random_baseline_forget_set_probability
+    
+
+    ############ SFT Unlearning Baseline ############
+    def get_sft_unleraning_retain_set_loss(self) -> List[float]:
+        """Measures degradation as loss"""
+        sft_retain_loss = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['performance_degradation_metrics']['sft_baseline_loss']
+                sft_retain_loss.append(l)
+        return sft_retain_loss
+    
+    def get_sft_unlearning_retain_set_score(self) -> List[float]:
+        """Measures degradation as score"""
+        sft_retain_score = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['performance_degradation_metrics']['sft_baseline_score']
+                sft_retain_score.append(l)
+        return sft_retain_score
+
+    def get_sft_unlearning_forget_set_loss(self) -> List[float]:
+        """Measures degradation as loss"""
+        sft_forget_loss = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['unlearning_metrics']['sft_baseline_loss']
+                sft_forget_loss.append(l)
+        return sft_forget_loss
+    
+    def get_sft_unlearning_forget_set_score(self) -> List[float]:
+        """Measures unlearning as score"""
+        sft_retain_score = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['performance_degradation_metrics']['sft_baseline_score']
+                sft_retain_score.append(l)
+        return sft_retain_score
+    
+    def get_sft_unlearning_forget_set_probability(self) -> List[float]:
+        """Measures unlearning as average probability of classifier evaluated on forget digit."""
+        sft_forget_set_probability = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                l = metrics['unlearning_metrics']['sft_baseline_probability']
+                sft_forget_set_probability.append(l)
+        return sft_forget_set_probability
+
     
     def draw_loss_curves_on_retain_set(self) -> None:
-
+        plt.clf()
         plt.title("Loss on Retain Set")
         plt.xlabel("TopK")
         plt.ylabel("Cross Entropy")
@@ -177,6 +229,9 @@ class Reporter:
         y_mimu = self.get_mimu_retain_set_loss()
         plt.plot(x, y_mimu, label='mimu topK maksing')
 
+        y_sft = self.get_sft_unleraning_retain_set_loss()
+        plt.plot(x, y_sft, label='sft unlearning')
+
         # add more baselines 
 
         plt.legend()
@@ -189,7 +244,7 @@ class Reporter:
         plt.close()
 
     def draw_score_curves_on_retain_set(self) -> None:
-
+        plt.clf()
         plt.title("Score on Retain Set")
         plt.xlabel("TopK")
         plt.ylabel("% Correct")
@@ -205,6 +260,9 @@ class Reporter:
         y_mimu = self.get_mimu_retain_set_score()
         plt.plot(x, y_mimu, label='mimu topK maksing')
 
+        y_sft = self.get_sft_unlearning_retain_set_score()
+        plt.plot(x, y_sft, label='sft unlearning')
+
         # add more baselines 
 
         plt.legend()
@@ -217,7 +275,7 @@ class Reporter:
         plt.close()
 
     def draw_classifier_probability_on_forget_class(self) -> None:
-
+        plt.clf()
         plt.title("Probability of Forget Class")
         plt.xlabel("TopK")
         plt.ylabel("probability")
@@ -233,6 +291,9 @@ class Reporter:
         y_mimu = self.get_mimu_forget_set_probability()
         plt.plot(x, y_mimu, label='mimu topK maksing')
 
+        y_sft = self.get_sft_unlearning_forget_set_probability()
+        plt.plot(x, y_sft, label='sft unlearning')
+
         # add more baselines 
 
         plt.legend()
@@ -246,7 +307,7 @@ class Reporter:
 
 
     def draw_loss_curves_on_forget_set(self) -> None:
-
+        plt.clf()
         plt.title("Loss on Forget Set")
         plt.xlabel("TopK")
         plt.ylabel("Cross Entropy")
@@ -262,6 +323,9 @@ class Reporter:
         y_mimu = self.get_mimu_forget_set_loss()
         plt.plot(x, y_mimu, label='mimu topK maksing')
 
+        y_sft = self.get_sft_unlearning_forget_set_loss()
+        plt.plot(x, y_sft, label='sft unlearning')
+
         # add more baselines 
 
         plt.legend()
@@ -274,7 +338,7 @@ class Reporter:
         plt.close()
 
     def draw_score_curves_on_forget_set(self) -> None:
-
+        plt.clf()
         plt.title("Score on Forget Set")
         plt.xlabel("TopK")
         plt.ylabel("% Correct")
@@ -289,13 +353,16 @@ class Reporter:
         y_mimu = self.get_mimu_forget_set_score()
         plt.plot(x, y_mimu, label='mimu topK maksing')
 
+        y_sft = self.get_sft_unlearning_forget_set_score()
+        plt.plot(x, y_sft, label='mimu topK maksing')
+
         # add more baselines 
 
         plt.legend()
         plt.grid(True)
 
         self.config.report_dir.mkdir(exist_ok=True, parents=True)
-        save_path = self.config.report_dir / f'score_retain_set.png'
+        save_path = self.config.report_dir / f'score_forget_set.png'
 
         plt.savefig(save_path)
         plt.close()

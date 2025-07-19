@@ -19,7 +19,8 @@ from torchvision.transforms import ToTensor
 
 from data import GraphGenerator
 from model import HookedMNISTClassifier, MaskingGCN
-from trainer import gumbel_top_k_sampling_v2
+from trainer import (UnlearningSFT, UnlearningSFTConfig,
+                     gumbel_top_k_sampling_v2)
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -30,9 +31,9 @@ class EvalConfig:
     data_path: Path = Path('datasets')
     graph_data_path: Path = Path('eval/Graphs')
     metrics_path: Path = Path('eval/Metrics and Plots')
-    forget_digit = 9
-    batch_size = 16
-    device = global_config.device
+    forget_digit: int = 9
+    batch_size: int = 16
+    device: str = global_config.device
     mask_layer = -2
     topK:int = 2500
     plot_category_probabilities: bool = True
@@ -44,6 +45,9 @@ class Eval:
         self.classifier = self.load_classifier()
         self.graph_generator = self.load_graph_generator()
         self.draw_eval_plots = draw_eval_plots
+
+        # sft unlearning baseline
+        self.finetuning_unlearning_model = self.train_sft_model()   
 
     def load_graph_generator(self) -> GraphGenerator:
         return GraphGenerator(
@@ -171,6 +175,23 @@ class Eval:
         mask[indices] = 1
         return self.get_masked_model(custom_mask=mask)
     
+    def train_sft_model(self) -> HookedMNISTClassifier:
+        sft_config = UnlearningSFTConfig(
+            original_model_path=self.config.classifier_path,
+            save_dir = Path('checkpoints/finetuned_mnist_classifier'),
+            data_dir=self.config.data_path,
+            finetune_layer=self.config.mask_layer,
+            lr=1e-2,
+            device=self.config.device,
+            steps=50,
+            batch_size=4,
+            logging_steps=10,
+            forget_digit=self.config.forget_digit
+        )
+        trainer = UnlearningSFT(sft_config)
+        model = trainer.finetune(save_checkpoint=False)
+        return model
+    
     def inference(self, model: HookedMNISTClassifier, data_loader: DataLoader, is_forget_set: bool = True, description: str = None) -> Any:
         model = model.to(self.config.device)
         model.eval()
@@ -233,7 +254,10 @@ class Eval:
         return metrics
     
     def draw_visualization(self, loss: List[float], score: List[float], experiment: str = '') -> None:
-        categories = ['Before Masking', 'After Masking', 'Random']
+        plt.clf()
+
+        # apend new baseline label below 
+        categories = ['Before Masking', 'After Masking', 'Random Masking Baseline', 'SFT Unlearning']
 
         fig, axs = plt.subplots(1, 2, figsize=(10, 4))  # 1 row, 2 columns
 
@@ -283,11 +307,27 @@ class Eval:
         )
 
 
+        sft_baseline_eval_metrics = self.inference(
+            description='SFT baseline on forget set',
+            model=self.finetuning_unlearning_model,
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=True
+        )
+
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test_loss'], after_masking_eval_metrics['test_loss'], random_baseline_eval_metrics['test_loss']],
-                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
+                loss=[before_masking_eval_metrics['test_loss'], 
+                      after_masking_eval_metrics['test_loss'], 
+                      random_baseline_eval_metrics['test_loss'], 
+                      sft_baseline_eval_metrics['test_loss'],
+                ],
+                score=[
+                    before_masking_eval_metrics['score'], 
+                    after_masking_eval_metrics['score'], 
+                    random_baseline_eval_metrics['score'],
+                    sft_baseline_eval_metrics['score']
+                ],
                 experiment='eval_unlearning_on_forget_set'
             )
 
@@ -304,10 +344,15 @@ class Eval:
             'after_masking_score': after_masking_eval_metrics['score'],
             'after_mask_probability': after_masking_eval_metrics['mean_classifier_probability_on_forget_digit'],
 
+            # random baseline
             'random_masking_loss': random_baseline_eval_metrics['test_loss'],
             'random_masking_score': random_baseline_eval_metrics['score'],
             'random_masking_probability': random_baseline_eval_metrics['mean_classifier_probability_on_forget_digit'],
 
+            # sft baseline
+            'sft_baseline_loss': sft_baseline_eval_metrics['test_loss'],
+            'sft_baseline_score': sft_baseline_eval_metrics['score'],
+            'sft_baseline_probability': sft_baseline_eval_metrics['mean_classifier_probability_on_forget_digit']
 
         }
 
@@ -337,11 +382,27 @@ class Eval:
             is_forget_set=False
         )
 
+        sft_baseline_eval_metrics = self.inference(
+            description='SFT baseline on retain set',
+            model=self.finetuning_unlearning_model,
+            data_loader=self.mnist_retain_set(),
+            is_forget_set=False
+        )
+
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test_loss'], after_masking_eval_metrics['test_loss'], random_baseline_eval_metrics['test_loss']],
-                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
+                loss=[before_masking_eval_metrics['test_loss'], 
+                      after_masking_eval_metrics['test_loss'], 
+                      random_baseline_eval_metrics['test_loss'], 
+                      sft_baseline_eval_metrics['test_loss'],
+                ],
+                score=[
+                    before_masking_eval_metrics['score'], 
+                    after_masking_eval_metrics['score'], 
+                    random_baseline_eval_metrics['score'],
+                    sft_baseline_eval_metrics['score']
+                ],
                 experiment='eval_performance_degradation_on_retain_set'
             )
 
@@ -356,9 +417,15 @@ class Eval:
             'after_masking_loss': after_masking_eval_metrics['test_loss'],
             'after_masking_score': after_masking_eval_metrics['score'],
 
+            # random baseline 
             'random_masking_loss': random_baseline_eval_metrics['test_loss'],
             'random_masking_score': random_baseline_eval_metrics['score'],
+
+            # sft baseline
+            'sft_baseline_loss': sft_baseline_eval_metrics['test_loss'],
+            'sft_baseline_score': sft_baseline_eval_metrics['score'],
         }
+    
 
     def eval_mask_efficacy(self) -> Dict:
         """Eval whether mask identified weights important for predicting desired forget class."""
@@ -386,11 +453,27 @@ class Eval:
             is_forget_set=True
         )
 
+        sft_baseline_eval_metrics = self.inference(
+            description='SFT baseline on forget set',
+            model=self.finetuning_unlearning_model,
+            data_loader=self.mnist_forget_set(),
+            is_forget_set=False
+        )
+
         if self.draw_eval_plots:
 
             self.draw_visualization(
-                loss=[before_masking_eval_metrics['test_loss'], after_masking_eval_metrics['test_loss'], random_baseline_eval_metrics['test_loss']],
-                score=[before_masking_eval_metrics['score'], after_masking_eval_metrics['score'], random_baseline_eval_metrics['score']],
+                loss=[before_masking_eval_metrics['test_loss'], 
+                      after_masking_eval_metrics['test_loss'], 
+                      random_baseline_eval_metrics['test_loss'], 
+                      sft_baseline_eval_metrics['test_loss'],
+                ],
+                score=[
+                    before_masking_eval_metrics['score'], 
+                    after_masking_eval_metrics['score'], 
+                    random_baseline_eval_metrics['score'],
+                    sft_baseline_eval_metrics['score']
+                ],
                 experiment='eval_mask_efficacy_on_foget_set'
             )
 
@@ -407,6 +490,9 @@ class Eval:
 
             'random_masking_loss': random_baseline_eval_metrics['test_loss'],
             'random_masking_score': random_baseline_eval_metrics['score'],
+
+            'sft_baseline_loss': sft_baseline_eval_metrics['test_loss'],
+            'sft_baseline_score': sft_baseline_eval_metrics['score'],
         }
 
     
@@ -439,3 +525,4 @@ if __name__ == '__main__':
     config = EvalConfig()
     eval = Eval(config)
     metrics = eval.eval()
+
