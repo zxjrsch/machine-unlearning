@@ -28,7 +28,7 @@ mimu/
 uv run main.py
 ```
 
-Highly recommend: clear artifacts before new runs to avoid data clashes, see `clean.sh`. 
+Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. 
 
 ### Metrics 
 
@@ -105,14 +105,14 @@ class Reporter:
 
 
     # Add your plots by modifying each draw_* method
-        def draw_score_curves_on_forget_set(self) -> None:
+    def draw_score_curves_on_forget_set(self) -> None:
 
-            # ...
+        # ...
 
-            y_sft = self.get_sft_unlearning_forget_set_score()
-            plt.plot(x, y_sft, label='mimu topK maksing')
+        y_sft = self.get_sft_unlearning_forget_set_score()
+        plt.plot(x, y_sft, label='mimu topK maksing')
 
-            # your baseline plot
+        # your baseline plot
 
 
 ```

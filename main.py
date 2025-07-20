@@ -70,9 +70,9 @@ def main():
     topK_array = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
     kappa_array = [900, 1900, 2900, 3900, 4900, 5900, 6900, 7900]
 
-    # partial sweep to save time
-    topK_array = [5000, 6000]
-    kappa_array = [4000, 5000]
+    # # partial sweep to save time
+    # topK_array = [5000, 6000]
+    # kappa_array = [4000, 5000]
 
     for topK, kappa in zip(topK_array, kappa_array):
         i += 1
