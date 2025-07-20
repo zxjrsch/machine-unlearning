@@ -36,7 +36,9 @@ class EvalConfig:
     device: str = global_config.device
     mask_layer = -2
     topK:int = 2500
+    kappa: int = 2000
     plot_category_probabilities: bool = True
+    use_set_difference_masking_strategy: bool = False
 
 class Eval:
     def __init__(self, config: EvalConfig, draw_eval_plots: bool=True):
@@ -45,7 +47,7 @@ class Eval:
         self.classifier = self.load_classifier()
         self.graph_generator = self.load_graph_generator()
         self.draw_eval_plots = draw_eval_plots
-
+        self.use_set_difference_masking_strategy = config.use_set_difference_masking_strategy
         # sft unlearning baseline
         self.finetuning_unlearning_model = self.train_sft_model()   
 
@@ -115,28 +117,56 @@ class Eval:
         return mask_label_list
     
     def get_model_mask(self) -> Tensor:
+        """
+        Set different masking strategy computes the set A of important weights for forget digit prediction, 
+        and the set B of important weights for the retain digits, then takes the set difference C = A - B which 
+        is considered to be the weights solely responsible for forget digit, and when masking out set C, the model 
+        degradation on retain is minimal. Thus the cardinality of #C <= top-K value.
+
+        If is_set_difference_strategy == False then we generate the mask based on feasibility scores of weights.
+        """
         mask_label_list = self.compute_representative_masks()
 
         forget_mask = None
-        retain_mask = None
+        retain_masks_sum = None
 
         for mask, digit in mask_label_list:
             if digit == self.config.forget_digit:
                 forget_mask = mask
             else:
-                retain_mask = mask if retain_mask is None else retain_mask + mask
+                retain_masks_sum = mask if retain_masks_sum is None else retain_masks_sum + mask
 
-        # weights important for forget set prediction but not important for retain classes correspond to 1s
-        mask = torch.clamp(forget_mask - retain_mask, min=0)
+        if self.use_set_difference_masking_strategy:
 
-        # negation operation return True for weight values which are are important to predict RETAIN set but not forget data
-        mask = mask == 0
-        num_keep_weights = mask.sum().item()
-        percent = round(num_keep_weights/self.graph_generator.num_vertices * 100, 2)
+            # weights important for forget set prediction but not important for retain classes correspond to 1s
+            mask = torch.clamp(forget_mask - retain_masks_sum, min=0)
 
-        logger.info(f'top-{self.config.topK} | target layer {self.config.mask_layer} | Retaining {num_keep_weights} ({percent} %)')
+            # negation operation return True for weight values which are are important to predict RETAIN set but not forget data
+            mask = mask == 0
+            num_keep_weights = mask.sum().item()
+            percent = round(num_keep_weights/self.graph_generator.num_vertices * 100, 2)
 
-        return (mask == 0).float()
+            logger.info(f'top-{self.config.topK} | target layer {self.config.mask_layer} | Retaining {num_keep_weights} ({percent} %)')
+
+            return (mask == 0).float()
+        
+        else:
+
+            # To handle target layer specified as a negative value such as -2
+            num_layers = sum([1 for layer in self.classifier.parameters() if layer.requires_grad])
+            target_layer = torch.tensor(self.config.mask_layer % num_layers + 1)  # index from 1 to avoid taking log(0)
+
+            feasibility_ranking = torch.log(target_layer) / torch.log(1+retain_masks_sum) 
+            masked_weight_indices = feasibility_ranking.topk(self.config.kappa).indices # zero weights with top-K feasibility
+            mask = torch.ones_like(feasibility_ranking, dtype=torch.float)
+            mask[masked_weight_indices] = 0
+
+            # tune kappa to desired loss
+            percent = round(1 - self.config.kappa/self.graph_generator.num_vertices * 100, 2)
+            logger.info(f'top-{self.config.topK} | target layer {self.config.mask_layer} | retaining (weights - kappa) = {self.graph_generator.num_vertices - self.config.kappa} ({percent} %) parameters.')
+
+            return mask
+
     
     def model_mask_forget_class(self) -> HookedMNISTClassifier:
         forget_class_mask = None
@@ -192,7 +222,7 @@ class Eval:
         model = trainer.finetune(save_checkpoint=False)
         return model
     
-    def inference(self, model: HookedMNISTClassifier, data_loader: DataLoader, is_forget_set: bool = True, description: str = None) -> Any:
+    def inference(self, model: HookedMNISTClassifier, data_loader: DataLoader, is_forget_set: bool = True, description: str = None) -> Dict:
         model = model.to(self.config.device)
         model.eval()
 
@@ -507,6 +537,7 @@ class Eval:
             'num_graph_edges': self.graph_generator.edge_matrix.shape[1],
             'maked_layer': self.config.mask_layer,
             'top_k_value': self.config.topK,
+            'kappa': self.config.kappa,
             'unlearning_metrics': unlearning_metrics,
             'performance_degradation_metrics': performance_degradation_metrics,
             'mask_efficacy_metrics': mask_efficacy_metrics
@@ -515,7 +546,14 @@ class Eval:
             self.config.metrics_path.mkdir(exist_ok=True, parents=True)
             file_path = self.config.metrics_path / 'metrics'
             file_path.mkdir(exist_ok=True, parents=True)
-            file_path = file_path / f'top-{self.config.topK}.json'
+
+            if self.use_set_difference_masking_strategy:
+                file_path = file_path / f'top-{self.config.topK}.json'
+            else:
+                # use feasibility ranking (topK, kappa)
+                file_path = file_path / f'top-{self.config.topK}-kappa-{self.config.kappa}.json'
+                
+
             with open(file_path, 'a') as f:
                 f.write(json.dumps(metrics) + '\n')
 

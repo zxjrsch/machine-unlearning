@@ -32,6 +32,7 @@ class Reporter:
         # ---------------------------------------
 
         self.topK = self.get_topK_array()
+        self.kappa = self.get_kappa_array()
 
     def get_topK_array(self) -> List[float]:
 
@@ -55,6 +56,15 @@ class Reporter:
                     
                 topK.append(metrics['top_k_value'])
         return topK
+    
+    def get_kappa_array(self) -> List[float]:
+
+        kappa = []
+        for p in self.metrics_paths:
+            with open(p, 'r') as f:
+                metrics = json.loads(f.read().strip())
+                kappa.append(metrics['kappa'])
+        return kappa
     
     ############ MIMU ############
     def get_mimu_retain_set_loss(self) -> List[float]:

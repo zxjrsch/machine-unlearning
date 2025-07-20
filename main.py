@@ -45,9 +45,9 @@ def train_gcn(src_checkpoint, topK=2500):
     # for i in range(5):
     #     data_loader.next()
 
-def evaluation(gcn_path, classifier_path, topK=2500):
+def evaluation(gcn_path, classifier_path, topK=2500, kappa=2000):
     # for real usecase 
-    config = EvalConfig(gcn_path=gcn_path, classifier_path=classifier_path, topK=topK)
+    config = EvalConfig(gcn_path=gcn_path, classifier_path=classifier_path, topK=topK, kappa=kappa)
     eval = Eval(config)
     return eval.eval()
 
@@ -66,13 +66,19 @@ def main():
     generate_graph(checkpoint_path=classifier_checkpoint_path)
 
     i = 0
-    topK_array = list(range(1, 9002, 1000))
+    # full sweep
+    topK_array = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
+    kappa_array = [900, 1900, 2900, 3900, 4900, 5900, 6900, 7900]
+
+    # partial sweep to save time
     topK_array = [5000, 6000]
-    for topK in topK_array:
+    kappa_array = [4000, 5000]
+
+    for topK, kappa in zip(topK_array, kappa_array):
         i += 1
-        logger.info(f'------- Starting exp {i} of {len(topK_array)} | top-{topK}  ------')
+        logger.info(f'------- Starting exp {i} of {len(topK_array)} | top-{topK} kappa-{kappa}  ------')
         gcn_checkpoint_path = train_gcn(classifier_checkpoint_path, topK=topK)
-        metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK)
+        metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK, kappa=kappa)
         logger.info(f'------- Completed top-{topK} experiment ------')
 
     viz()

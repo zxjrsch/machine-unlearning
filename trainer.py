@@ -415,7 +415,7 @@ class UnlearningSFT:
         else: 
             model = self.config.init_model
 
-        # often target is specified like -2
+        # To handle target layer specified as a negative value such as -2
         num_layers = sum([1 for layer in model.parameters() if layer.requires_grad])
         target_layer = self.config.finetune_layer % num_layers
 
