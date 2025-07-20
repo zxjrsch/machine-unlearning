@@ -12,6 +12,7 @@ from reporter import Reporter, ReporterConfig
 from trainer import (GCNTrainer, GCNTrainerConfig, GraphDataLoader, Trainer,
                      TrainerConfig)
 
+from itertools import product
 
 def train_mnist_classifier():
     config = TrainerConfig()
@@ -65,21 +66,26 @@ def main():
     logger.info(f'-------- Generating GCN Training Data -------')
     generate_graph(checkpoint_path=classifier_checkpoint_path)
 
-    i = 0
     # full sweep
     topK_array = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
     kappa_array = [900, 1900, 2900, 3900, 4900, 5900, 6900, 7900]
+
+    topK_array = [7000]
+    kappa_array = list(range(100, 7100+1, 1000))
 
     # # partial sweep to save time
     # topK_array = [5000, 6000]
     # kappa_array = [4000, 5000]
 
-    for topK, kappa in zip(topK_array, kappa_array):
+    experiments = list(product(topK_array, kappa_array))
+
+    i = 0
+    for topK, kappa in experiments:
         i += 1
-        logger.info(f'------- Starting exp {i} of {len(topK_array)} | top-{topK} kappa-{kappa}  ------')
+        logger.info(f'------- Starting exp {i} of {len(experiments)} | top-{topK} kappa-{kappa}  ------')
         gcn_checkpoint_path = train_gcn(classifier_checkpoint_path, topK=topK)
         metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK, kappa=kappa)
-        logger.info(f'------- Completed top-{topK} experiment ------')
+        logger.info(f'------- Completed top-{topK} kappa-{kappa} experiment ------')
 
     viz()
     logger.info(f'-------- Experiment Complete -------')

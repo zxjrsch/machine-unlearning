@@ -6,12 +6,18 @@ from pathlib import Path
 from typing import List
 
 import matplotlib.pyplot as plt
+from itertools import product
 
+@dataclass
+class xData:
+    topK = 'Top K'
+    kappa = 'kappa'
 
 @dataclass
 class ReporterConfig:
     metrics_dir: Path = Path('eval/Metrics and Plots/metrics')
     report_dir: Path = Path('reports')
+    x_axis_data: str = xData.kappa
 
 class Reporter:
     def __init__(self, config: ReporterConfig):
@@ -33,6 +39,9 @@ class Reporter:
 
         self.topK = self.get_topK_array()
         self.kappa = self.get_kappa_array()
+
+        self.x_axis_data = self.topK if config.x_axis_data == xData.topK else self.kappa
+        self.x_axis_label = xData.topK if config.x_axis_data == xData.topK else xData.kappa
 
     def get_topK_array(self) -> List[float]:
 
@@ -225,10 +234,10 @@ class Reporter:
     def draw_loss_curves_on_retain_set(self) -> None:
         plt.clf()
         plt.title("Loss on Retain Set")
-        plt.xlabel("TopK")
+        plt.xlabel(self.x_axis_label)
         plt.ylabel("Cross Entropy")
 
-        x = self.topK
+        x = self.x_axis_data
 
         y_no_treatment_baseline = [self.classifier_no_intervention_stats['retain_set_loss'] for _ in x]
         plt.plot(x, y_no_treatment_baseline, label='original classifier')
@@ -237,7 +246,7 @@ class Reporter:
         plt.plot(x, y_random_baseline, label='random masking')
 
         y_mimu = self.get_mimu_retain_set_loss()
-        plt.plot(x, y_mimu, label='mimu topK maksing')
+        plt.plot(x, y_mimu, label='mimu topK masking')
 
         y_sft = self.get_sft_unleraning_retain_set_loss()
         plt.plot(x, y_sft, label='sft unlearning')
@@ -256,10 +265,10 @@ class Reporter:
     def draw_score_curves_on_retain_set(self) -> None:
         plt.clf()
         plt.title("Score on Retain Set")
-        plt.xlabel("TopK")
+        plt.xlabel(self.x_axis_label)
         plt.ylabel("% Correct")
 
-        x = self.topK
+        x = self.x_axis_data
 
         y_no_treatment_baseline = [self.classifier_no_intervention_stats['retain_set_score'] for _ in x]
         plt.plot(x, y_no_treatment_baseline, label='original classifier')
@@ -268,7 +277,7 @@ class Reporter:
         plt.plot(x, y_random_baseline, label='random masking')
 
         y_mimu = self.get_mimu_retain_set_score()
-        plt.plot(x, y_mimu, label='mimu topK maksing')
+        plt.plot(x, y_mimu, label='mimu topK masking')
 
         y_sft = self.get_sft_unlearning_retain_set_score()
         plt.plot(x, y_sft, label='sft unlearning')
@@ -287,10 +296,10 @@ class Reporter:
     def draw_classifier_probability_on_forget_class(self) -> None:
         plt.clf()
         plt.title("Probability of Forget Class")
-        plt.xlabel("TopK")
+        plt.xlabel(self.x_axis_label)
         plt.ylabel("probability")
 
-        x = self.topK
+        x = self.x_axis_data
 
         y_no_treatment_baseline = [self.classifier_no_intervention_stats['forget_digit_probability'] for _ in x]
         plt.plot(x, y_no_treatment_baseline, label='original classifier')
@@ -299,7 +308,7 @@ class Reporter:
         plt.plot(x, y_random_baseline, label='random masking')
 
         y_mimu = self.get_mimu_forget_set_probability()
-        plt.plot(x, y_mimu, label='mimu topK maksing')
+        plt.plot(x, y_mimu, label='mimu topK masking')
 
         y_sft = self.get_sft_unlearning_forget_set_probability()
         plt.plot(x, y_sft, label='sft unlearning')
@@ -319,10 +328,10 @@ class Reporter:
     def draw_loss_curves_on_forget_set(self) -> None:
         plt.clf()
         plt.title("Loss on Forget Set")
-        plt.xlabel("TopK")
+        plt.xlabel(self.x_axis_label)
         plt.ylabel("Cross Entropy")
 
-        x = self.topK
+        x = self.x_axis_data
 
         y_no_treatment_baseline = [self.classifier_no_intervention_stats['forget_set_loss'] for _ in x]
         plt.plot(x, y_no_treatment_baseline, label='original classifier')
@@ -331,7 +340,7 @@ class Reporter:
         plt.plot(x, y_random_baseline, label='random masking')
 
         y_mimu = self.get_mimu_forget_set_loss()
-        plt.plot(x, y_mimu, label='mimu topK maksing')
+        plt.plot(x, y_mimu, label='mimu topK masking')
 
         y_sft = self.get_sft_unlearning_forget_set_loss()
         plt.plot(x, y_sft, label='sft unlearning')
@@ -350,10 +359,10 @@ class Reporter:
     def draw_score_curves_on_forget_set(self) -> None:
         plt.clf()
         plt.title("Score on Forget Set")
-        plt.xlabel("TopK")
+        plt.xlabel(self.x_axis_label)
         plt.ylabel("% Correct")
 
-        x = self.topK
+        x = self.x_axis_data
         y_no_treatment_baseline = [self.classifier_no_intervention_stats['forget_set_score'] for _ in x]
         plt.plot(x, y_no_treatment_baseline, label='original classifier')
 
@@ -361,10 +370,10 @@ class Reporter:
         plt.plot(x, y_random_baseline, label='random masking')
 
         y_mimu = self.get_mimu_forget_set_score()
-        plt.plot(x, y_mimu, label='mimu topK maksing')
+        plt.plot(x, y_mimu, label='mimu topK masking')
 
         y_sft = self.get_sft_unlearning_forget_set_score()
-        plt.plot(x, y_sft, label='mimu topK maksing')
+        plt.plot(x, y_sft, label='sft unlearning')
 
         # add more baselines 
 

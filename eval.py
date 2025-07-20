@@ -32,7 +32,7 @@ class EvalConfig:
     graph_data_path: Path = Path('eval/Graphs')
     metrics_path: Path = Path('eval/Metrics and Plots')
     forget_digit: int = 9
-    batch_size: int = 16
+    batch_size: int = 256
     device: str = global_config.device
     mask_layer = -2
     topK:int = 2500
@@ -174,7 +174,11 @@ class Eval:
             if digit == self.config.forget_digit:
                 forget_class_mask = mask
                 break
-        return self.get_masked_model(custom_mask=forget_class_mask)
+
+        topK_indices = forget_class_mask.topk(self.config.topK).indices
+        mask = torch.zeros_like(forget_class_mask, dtype=torch.float)
+        mask[topK_indices] = 1
+        return self.get_masked_model(custom_mask=mask)
 
     def get_masked_model(self, custom_mask: Union[Tensor, None]=None) -> HookedMNISTClassifier:
         """Single layer masking."""
@@ -199,7 +203,7 @@ class Eval:
 
     def get_randomly_masked_model(self) -> HookedMNISTClassifier:
         mask = torch.zeros(self.graph_generator.num_vertices, dtype=torch.float32)
-        num_1s = self.graph_generator.num_vertices - self.config.topK
+        num_1s = self.graph_generator.num_vertices - self.config.kappa
         assert num_1s > 0
         indices = torch.randperm(self.graph_generator.num_vertices)[:num_1s]
         mask[indices] = 1
@@ -247,7 +251,7 @@ class Eval:
                     plt.bar(range(10), probs, tick_label=[str(i) for i in range(10)])
                     save_path = self.config.metrics_path / f'probabilities/{description}/'
                     save_path.mkdir(parents=True, exist_ok=True)
-                    save_path = save_path / f'top_k_{self.config.topK}.png'
+                    save_path = save_path / f'top_k_{self.config.topK}_kappa_{self.config.kappa}.png'
 
                     plt.xlabel('Class')
                     plt.ylabel('Probability')
@@ -287,7 +291,7 @@ class Eval:
         plt.clf()
 
         # apend new baseline label below 
-        categories = ['Before Masking', 'After Masking', 'Random Masking Baseline', 'SFT Unlearning']
+        categories = ['Original', 'MIMU', 'Random', 'SFT']
 
         fig, axs = plt.subplots(1, 2, figsize=(10, 4))  # 1 row, 2 columns
 
@@ -301,13 +305,13 @@ class Eval:
         axs[1].set_title('Score')
         axs[1].set_ylabel('Score')
 
-        plt.suptitle(f'{experiment} (top-{self.config.topK})')
+        plt.suptitle(f'{experiment} (top-{self.config.topK} kappa-{self.config.kappa})')
         plt.tight_layout()
 
         self.config.metrics_path.mkdir(parents=True, exist_ok=True)
         save_path = self.config.metrics_path / f'{experiment}/'
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = save_path / f'top_{self.config.topK}.png'
+        save_path = save_path / f'top_{self.config.topK}_kappa_{self.config.kappa}.png'
         plt.savefig(save_path)
         plt.close()
 
@@ -330,7 +334,7 @@ class Eval:
         )
 
         random_baseline_eval_metrics = self.inference(
-            description='random on forget set',
+            description='random on forget set (unlearning)',
             model=self.get_randomly_masked_model(),
             data_loader=self.mnist_forget_set(),
             is_forget_set=True
@@ -406,7 +410,7 @@ class Eval:
         )
 
         random_baseline_eval_metrics = self.inference(
-            description='random on retain set',
+            description='random retain set (degradation)',
             model=self.get_randomly_masked_model(),
             data_loader=self.mnist_retain_set(),
             is_forget_set=False
@@ -477,7 +481,7 @@ class Eval:
         )
 
         random_baseline_eval_metrics = self.inference(
-            description='random forget set',
+            description='random forget set (efficacy)',
             model=self.get_randomly_masked_model(),
             data_loader=self.mnist_forget_set(),
             is_forget_set=True

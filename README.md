@@ -28,7 +28,11 @@ mimu/
 uv run main.py
 ```
 
-Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. 
+Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. Example command 
+
+```bash
+clear && bash clean.sh && uv run main.py 
+```
 
 ### Metrics 
 
