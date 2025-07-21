@@ -1,5 +1,6 @@
 import glob
 import os
+from itertools import product
 from pathlib import Path
 
 import torch
@@ -12,7 +13,6 @@ from reporter import Reporter, ReporterConfig
 from trainer import (GCNTrainer, GCNTrainerConfig, GraphDataLoader, Trainer,
                      TrainerConfig)
 
-from itertools import product
 
 def train_mnist_classifier():
     config = TrainerConfig()

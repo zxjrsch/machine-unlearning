@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 from loguru import logger
 from omegaconf import OmegaConf
-from torch import Tensor
+from torch import Tensor, nn
 from torch.utils.data import DataLoader, Subset
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
@@ -94,7 +94,13 @@ class Eval:
         dataset = MNIST(root=self.config.data_path, train=False, transform=ToTensor(), download=True)
         retain_indices = (dataset.targets != self.config.forget_digit).nonzero(as_tuple=True)[0]
         retain_set = Subset(dataset, retain_indices)
-        return DataLoader(dataset=retain_set, batch_size=self.config.batch_size)       
+        return DataLoader(dataset=retain_set, batch_size=self.config.batch_size)  
+
+    def mnist_single_class(self, digit: int) -> DataLoader:
+        dataset = MNIST(root=self.config.data_path, train=False, transform=ToTensor(), download=True)
+        desired_indices = (dataset.targets == digit).nonzero(as_tuple=True)[0]
+        desired_data = Subset(dataset, desired_indices)
+        return DataLoader(dataset=desired_data, batch_size=self.config.batch_size)      
     
     def compute_representative_masks(self) -> List[Tuple[Tensor, int]]:
         """Gets masks for all the classes."""
@@ -155,8 +161,12 @@ class Eval:
             # To handle target layer specified as a negative value such as -2
             num_layers = sum([1 for layer in self.classifier.parameters() if layer.requires_grad])
             target_layer = torch.tensor(self.config.mask_layer % num_layers + 1)  # index from 1 to avoid taking log(0)
+            
+            num_retain_classes = len(mask_label_list) - 1 
+            assert num_retain_classes == 9
+            scores = retain_masks_sum / num_retain_classes - forget_mask
 
-            feasibility_ranking = torch.log(target_layer) / torch.log(1+retain_masks_sum) 
+            feasibility_ranking = torch.log(target_layer) / torch.log(1+scores) 
             masked_weight_indices = feasibility_ranking.topk(self.config.kappa).indices # zero weights with top-K feasibility
             mask = torch.ones_like(feasibility_ranking, dtype=torch.float)
             mask[masked_weight_indices] = 0
@@ -239,13 +249,15 @@ class Eval:
                 input = input.to(self.config.device)
                 target = target.to(self.config.device)
                 
-                preds: torch.Tensor = model(input)
-                classifier_probs: List[float] = F.softmax(preds, dim=-1)
+                preds: Tensor = model(input)
+                classifier_probs: Tensor = F.softmax(preds, dim=-1)
 
                 if self.config.plot_category_probabilities and not plotted and is_forget_set:
                     # the mean probability is only meaningful over a single class, which is why we check is_forget_set
                     probs: List[float] = classifier_probs.mean(dim=0).tolist()
                     mean_prob = probs[self.config.forget_digit] 
+
+                    plt.clf()
                     fig, ax = plt.subplots()
                     plt.figure(figsize=(10, 6))
                     plt.bar(range(10), probs, tick_label=[str(i) for i in range(10)])
@@ -261,7 +273,6 @@ class Eval:
                     plt.savefig(save_path)
                     plotted = True
 
-                
                 test_loss += self.graph_generator.loss_fn(preds, target).item()
                 score += (classifier_probs.argmax(1) == target).type(torch.float).sum().item()
 
@@ -314,6 +325,49 @@ class Eval:
         save_path = save_path / f'top_{self.config.topK}_kappa_{self.config.kappa}.png'
         plt.savefig(save_path)
         plt.close()
+
+    def get_class_probability(self, digit: int, model: nn.Module) -> List[float]:
+        data_loader = self.mnist_single_class(digit=digit)
+        model = model.to(self.config.device)
+        model.eval()
+        with torch.no_grad():
+            input, target = next(iter(data_loader))
+            input = input.to(self.config.device)
+            target = target.to(self.config.device)
+            logits: torch.Tensor = model(input)
+            classifier_probabilities = F.softmax(logits, dim=-1).mean(dim=0).tolist()
+            return classifier_probabilities
+        
+    def eval_class_probability(self, model: nn.Module, description: str) -> Dict:
+        plt.clf()
+        fig, axes = plt.subplots(2, 5, figsize=(20, 8), sharex=True, sharey=True, constrained_layout=True)
+        fig.suptitle(f'Unlearning digit {self.config.forget_digit}', fontsize=16, y=1.02)
+
+        x = list(range(10))
+        distributions = {}
+        for digit, ax in enumerate(axes.flatten()):
+            distribution = self.get_class_probability(digit=digit, model=model)
+            distributions[digit] = distribution
+            colors = plt.cm.viridis(torch.linspace(0, 1, len(x)).numpy())
+            ax.bar(x, distribution, align='center', alpha=0.8, color=colors)
+            ax.set_title(f'Digit {digit}')
+            ax.set_xticks(x)
+            ax.set_xticklabels(x)
+            ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+        fig.supxlabel('Classes', fontsize=14)
+        fig.supylabel('Classifier Probability', fontsize=14)
+
+        save_path = self.config.metrics_path / f'probabilities/all_classes_{description}/'
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_path = save_path / f'top_k_{self.config.topK}_kappa_{self.config.kappa}.png'
+
+        plt.savefig(save_path)
+        return distributions
+
+    def draw_weight_distribution(self) -> None:
+        pass
+
 
     def eval_unlearning(self) -> Dict:
         """Evaluate model before and after MIMU masking on forget set."""

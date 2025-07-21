@@ -2,11 +2,12 @@ import glob
 import json
 import os
 from dataclasses import dataclass
+from itertools import product
 from pathlib import Path
 from typing import List
 
 import matplotlib.pyplot as plt
-from itertools import product
+
 
 @dataclass
 class xData:
@@ -144,7 +145,7 @@ class Reporter:
         for p in self.metrics_paths:
             with open(p, 'r') as f:
                 metrics = json.loads(f.read().strip())
-                l = metrics['performance_degradation_metrics']['after_masking_score']
+                l = metrics['performance_degradation_metrics']['random_masking_score']
                 random_retain_score.append(l)
         return random_retain_score
 
@@ -164,7 +165,7 @@ class Reporter:
         for p in self.metrics_paths:
             with open(p, 'r') as f:
                 metrics = json.loads(f.read().strip())
-                l = metrics['performance_degradation_metrics']['after_masking_score']
+                l = metrics['unlearning_metrics']['random_masking_score']
                 random_forget_score.append(l)
         return random_forget_score
     
@@ -216,7 +217,7 @@ class Reporter:
         for p in self.metrics_paths:
             with open(p, 'r') as f:
                 metrics = json.loads(f.read().strip())
-                l = metrics['performance_degradation_metrics']['sft_baseline_score']
+                l = metrics['unlearning_metrics']['sft_baseline_score']
                 sft_retain_score.append(l)
         return sft_retain_score
     
