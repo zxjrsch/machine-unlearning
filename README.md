@@ -34,6 +34,12 @@ Highly recommended: clear artifacts before new runs to avoid data clashes, see `
 clear && bash clean.sh && uv run main.py 
 ```
 
+Save output to file 
+
+```bash 
+nohup bash -c "clear && bash clean.sh && uv run main.py" > output.log 2>&1 &
+```
+
 ### Metrics 
 
 1. Cross entropy loss of classifier under forget set (measures unlearning)

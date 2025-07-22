@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import re
 from dataclasses import dataclass
 from itertools import product
 from pathlib import Path
@@ -24,7 +25,8 @@ class Reporter:
     def __init__(self, config: ReporterConfig):
 
         self.config = config
-        self.metrics_paths = sorted(glob.glob(os.path.join(self.config.metrics_dir, '*.json')))
+        self.sort_fn = lambda x: int(re.search(r'kappa-(\d+)\.json', x).group(1)) if xData.kappa else lambda x: int(re.search(r'top-(\d+)\.json', x).group(1))
+        self.metrics_paths = sorted(glob.glob(os.path.join(self.config.metrics_dir, '*.json')), key=self.sort_fn)
 
         # --------------- init by get_topK_array
         self.mask_layer = None  
@@ -403,3 +405,4 @@ if __name__ == '__main__':
     config = ReporterConfig()
     reporter = Reporter(config)
     reporter.plot()
+    # print(reporter.metrics_paths)

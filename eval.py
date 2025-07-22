@@ -199,6 +199,9 @@ class Eval:
         mask = mask.to(self.config.device)
         weight_vector = self.graph_generator.weight_feature.to(self.config.device)
         layer_vect = torch.mul(mask, weight_vector)
+        
+        retain_rate = 1 - self.config.kappa / self.graph_generator.num_vertices
+        layer_vect /= retain_rate
 
         m, n = [p for p in self.classifier.parameters() if p.requires_grad][self.config.mask_layer].shape
         layer_matrix = layer_vect.unflatten(dim=0, sizes=(m,n))
@@ -364,6 +367,7 @@ class Eval:
         save_path = save_path / f'{description}_top_k_{self.config.topK}_kappa_{self.config.kappa}.png'
 
         plt.savefig(save_path)
+        plt.close()
         return distributions
 
     def draw_weight_distribution(self, model: nn.Module, model_name: str, is_abs_val: bool = True) -> None:
@@ -383,6 +387,7 @@ class Eval:
         save_path.mkdir(parents=True, exist_ok=True)
         save_path = save_path / f'{model_name}_top_k_{self.config.topK}_kappa_{self.config.kappa}.png'
         plt.savefig(save_path)
+        plt.close()
 
     def eval_class_probability(self) -> Dict:
         # record dictionaries to json later when needed
