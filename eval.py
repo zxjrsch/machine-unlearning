@@ -26,8 +26,8 @@ global_config = OmegaConf.load("configs/config.yaml")
 
 @dataclass
 class EvalConfig:
-    gcn_path: Path # =  Path(sorted(glob.glob(os.path.join('checkpoints/gcn/', '*.pt')))[0]) 
-    classifier_path: Path # = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
+    gcn_path: Path  #=  Path(sorted(glob.glob(os.path.join('checkpoints/gcn/', '*.pt')))[0]) 
+    classifier_path: Path  #= Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
     data_path: Path = Path('datasets')
     graph_data_path: Path = Path('eval/Graphs')
     metrics_path: Path = Path('eval/Metrics and Plots')
@@ -35,8 +35,8 @@ class EvalConfig:
     batch_size: int = 256
     device: str = global_config.device
     mask_layer = -2
-    topK:int = 2500
-    kappa: int = 2000
+    topK:int = 7000
+    kappa: int = 5000
     plot_category_probabilities: bool = True
     use_set_difference_masking_strategy: bool = False
 
@@ -200,7 +200,7 @@ class Eval:
         weight_vector = self.graph_generator.weight_feature.to(self.config.device)
         layer_vect = torch.mul(mask, weight_vector)
 
-        m,n = [p for p in self.classifier.parameters() if p.requires_grad][self.config.mask_layer].shape
+        m, n = [p for p in self.classifier.parameters() if p.requires_grad][self.config.mask_layer].shape
         layer_matrix = layer_vect.unflatten(dim=0, sizes=(m,n))
 
         state_dict = copy.deepcopy(self.classifier.state_dict())
@@ -338,10 +338,11 @@ class Eval:
             classifier_probabilities = F.softmax(logits, dim=-1).mean(dim=0).tolist()
             return classifier_probabilities
         
-    def eval_class_probability(self, model: nn.Module, description: str) -> Dict:
+    def draw_class_probability(self, model: nn.Module, description: str) -> Dict:
         plt.clf()
         fig, axes = plt.subplots(2, 5, figsize=(20, 8), sharex=True, sharey=True, constrained_layout=True)
-        fig.suptitle(f'Unlearning digit {self.config.forget_digit}', fontsize=16, y=1.02)
+
+        fig.suptitle(f'Unlearning digit {self.config.forget_digit}', fontsize=16, y=1.05)
 
         x = list(range(10))
         distributions = {}
@@ -358,16 +359,43 @@ class Eval:
         fig.supxlabel('Classes', fontsize=14)
         fig.supylabel('Classifier Probability', fontsize=14)
 
-        save_path = self.config.metrics_path / f'probabilities/all_classes_{description}/'
+        save_path = self.config.metrics_path / f'probabilities_all_classes/{description}/'
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = save_path / f'top_k_{self.config.topK}_kappa_{self.config.kappa}.png'
+        save_path = save_path / f'{description}_top_k_{self.config.topK}_kappa_{self.config.kappa}.png'
 
         plt.savefig(save_path)
         return distributions
 
-    def draw_weight_distribution(self) -> None:
-        pass
+    def draw_weight_distribution(self, model: nn.Module, model_name: str, is_abs_val: bool = True) -> None:
 
+        layer_vector: Tensor = [p.flatten() for p in model.parameters()][self.config.mask_layer]
+        if is_abs_val:
+            layer_vector = layer_vector.abs()
+        layer_vector = layer_vector.tolist()
+        assert len(layer_vector) == self.graph_generator.num_vertices
+        plt.clf()
+        plt.hist(layer_vector, bins=15, edgecolor='black')
+        plt.xlabel('Weight')
+        plt.ylabel('Frequency')
+        plt.title(f'{model_name} parameter frequency (layer: {self.config.mask_layer})')
+
+        save_path = self.config.metrics_path / f'weight_histograms/{model_name}/'
+        save_path.mkdir(parents=True, exist_ok=True)
+        save_path = save_path / f'{model_name}_top_k_{self.config.topK}_kappa_{self.config.kappa}.png'
+        plt.savefig(save_path)
+
+    def eval_class_probability(self) -> Dict:
+        # record dictionaries to json later when needed
+        self.draw_class_probability(model=self.classifier, description='classifier')
+        self.draw_class_probability(model=self.get_masked_model(), description='mimu')
+        self.draw_class_probability(model=self.get_randomly_masked_model(), description='random')
+        self.draw_class_probability(model=self.finetuning_unlearning_model, description='sft')
+
+    def eval_weight_distributions(self) -> None:
+        self.draw_weight_distribution(model=self.classifier, model_name='classifier')
+        self.draw_weight_distribution(model=self.get_masked_model(), model_name='mimu')
+        self.draw_weight_distribution(model=self.get_randomly_masked_model(), model_name='random')
+        self.draw_weight_distribution(model=self.finetuning_unlearning_model, model_name='sft')
 
     def eval_unlearning(self) -> Dict:
         """Evaluate model before and after MIMU masking on forget set."""
@@ -588,6 +616,10 @@ class Eval:
         unlearning_metrics = self.eval_unlearning()
         performance_degradation_metrics = self.eval_performance_degradation()
         mask_efficacy_metrics = self.eval_mask_efficacy()
+
+        self.eval_weight_distributions()
+        self.eval_class_probability()
+
         metrics = {
             'id': str(uuid.uuid1()),
             'forget_digit': self.config.forget_digit,
@@ -621,4 +653,5 @@ if __name__ == '__main__':
     config = EvalConfig()
     eval = Eval(config)
     metrics = eval.eval()
+
 
