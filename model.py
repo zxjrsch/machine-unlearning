@@ -1,14 +1,17 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, List, Tuple, Union
+from typing import Callable, Iterator, List, Tuple, Union, Type, Optional
 
 import torch
 import torch.nn.functional as F
-from torch import nn
+from torch import nn, Tensor
 from torch.nn.parameter import Parameter
 from torch.utils.hooks import RemovableHandle
 from torch_geometric.nn import GCNConv, MessagePassing
 from torchinfo import summary
+
+from torchvision.models import ResNet
+from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 
 
 @dataclass
@@ -233,3 +236,106 @@ class MaskingGCN(nn.Module):
         # normalized probability
         return F.softmax(self.proj_out(x), dim=1).squeeze(-1)
     
+
+class HookedResNet(nn.Module):
+    def __init__(
+        self,
+        num_classes: int = 10,
+        unlearning_target_layer_dim: int = 1024,
+    ) -> None:
+        super().__init__()
+
+        self.num_classes = num_classes
+        self.unlearning_target_layer_dim = unlearning_target_layer_dim
+
+        self.inplanes = 64
+        self.dilation = 1
+
+        self.groups = 1
+        self.base_width = 64
+        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(self.inplanes)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(BasicBlock, 64, 2)
+        self.layer2 = self._make_layer(BasicBlock, 128, 2, stride=2, dilate=False)
+        self.layer3 = self._make_layer(BasicBlock, 256, 2, stride=2, dilate=False)
+        self.layer4 = self._make_layer(BasicBlock, 512, 2, stride=2, dilate=False)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        self.unlearning_target_feedforward = nn.Linear(512 * BasicBlock.expansion, unlearning_target_layer_dim)
+
+        self.fc = nn.Linear(unlearning_target_layer_dim, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def _make_layer(
+        self,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        planes: int,
+        blocks: int,
+        stride: int = 1,
+        dilate: bool = False,
+    ) -> nn.Sequential:
+        downsample = None
+        previous_dilation = self.dilation
+        if dilate:
+            self.dilation *= stride
+            stride = 1
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(self.inplanes, planes * block.expansion, stride),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
+
+        layers = []
+        layers.append(
+            block(
+                self.inplanes, planes, stride, downsample, self.groups, self.base_width, previous_dilation, nn.BatchNorm2d
+            )
+        )
+        self.inplanes = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(
+                block(
+                    self.inplanes,
+                    planes,
+                    groups=self.groups,
+                    base_width=self.base_width,
+                    dilation=self.dilation,
+                    norm_layer=nn.BatchNorm2d,
+                )
+            )
+
+        return nn.Sequential(*layers)
+
+    def _forward_impl(self, x: Tensor) -> Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.unlearning_target_feedforward(x)
+        x = self.fc(x)
+
+        return x
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self._forward_impl(x)
+
+if __name__ == '__main__':
+    import code 
+    m = HookedResNet()
+    code.interact(local=locals())

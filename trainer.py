@@ -5,8 +5,9 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, NewType, Tuple, Type, Union
+from typing import List, NewType, Tuple, Type, TypedDict, Union
 
+import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 from loguru import logger
@@ -32,7 +33,7 @@ class TrainerConfig:
     model_name: str = 'mnist_classifier'
     epochs: int = 1
     lr: float = 1e-3
-    logging_steps: int = 20
+    logging_steps: int = 50
     wandb = None
 
 
@@ -174,6 +175,12 @@ class GraphDataLoader:
         self.next_batch_path += 1
         return gcn_batch, self.edge_matrix
 
+class GCNTrainerStatistics(TypedDict):
+    loss_term_1: List[float] = []
+    loss_term_2: List[float] = []
+    loss_term_3: List[float] = []
+
+
 class GCNTrainer:
 
     def __init__(self, config: GCNTrainerConfig) -> None:
@@ -278,13 +285,17 @@ class GCNTrainer:
         probs = probs.to(self.device)
         return Categorical(probs=probs)
     
-    def train(self) -> None:
+    def train(self, plot_stats: bool = True) -> None:
         adam_optimizer = torch.optim.Adam(self.gcn.parameters(), lr=self.config.lr, weight_decay=self.config.weight_decay)
         self.gcn = self.gcn.to(self.device)
         self.gcn.train()
 
         # logger.info(f'====== GCN training for top-{self.config.mask_K} MIMU masking | Mask layer: {self.config.mask_layer} =====')
         final_loss = 0
+        
+        if plot_stats:
+            trainer_stats = GCNTrainerStatistics()
+
         for s in range(self.config.steps):
             gcn_batch, edge_matrix = self.graph_data_loader.next()
 
@@ -299,24 +310,44 @@ class GCNTrainer:
             # logger.info(f'Batch {feature_batch.shape} | Edge {edge_matrix.shape} | Input {input_batch.shape} | Target {target_batch.shape}')
 
             loss: Tensor = torch.tensor(0.).to(self.device)
+            
             for i in range(batch_size):
 
                 x, target = input_batch[i].unsqueeze(0), target_batch[i]
 
                 emperical_Q_logits: Tensor = self.gcn(x = feature_batch[i], edge_index = edge_matrix)
                 mask = gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.K).to(self.device)
+
+                # # delete the next line 
+                # mask = F.softmax(emperical_Q_logits, dim=-1)
+                 
                 masked_model = self.mask_model(mask=mask).to(self.device)
                 
                 masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[target]
-                loss -= torch.log(masked_model_probability) # 1/3 term of loss 
 
+                # 1/3 term of loss 
+                term1 = torch.log(masked_model_probability) 
+                loss -= term1   
+
+                # 2/3 term of loss
                 idx = torch.arange(start=0, end=self.src_model_dim, step=1, device=self.device)
                 log_probs = self.prior_distribution.log_prob(idx)
-                loss -= torch.dot(mask, log_probs)    # 2/3 term of loss
+                term2 = torch.dot(mask, log_probs)    
+                loss -= term2
 
+                # 3/3 term of loss
                 Q_distribution = Categorical(probs=F.softmax(emperical_Q_logits, dim=-1))
-                log_probs = Q_distribution.log_prob(idx)
-                loss += torch.dot(mask, log_probs)    # 3/3 term of loss
+                log_probs: Tensor = Q_distribution.log_prob(idx)
+                term3 = torch.dot(mask, log_probs)    
+                loss += term3
+
+
+                if plot_stats:
+                    trainer_stats['loss_term_1'].append(term1.item())
+                    trainer_stats['loss_term_2'].append(term2.item())
+                    trainer_stats['loss_term_3'].append(term3.item())
+
+                # logger.info(f'Step {s} sample {i} | term 1 {-term1.item()} | term 2 {-term2.item()} | term 3 {term3.item()}')
             
             loss /= batch_size  # prevent exploding gradients while optimizing same objective
 
@@ -326,6 +357,28 @@ class GCNTrainer:
             if s % 10 == 0:
                 logger.info(f'Step {s} | GCN loss {loss.item()}')
             final_loss = loss.item()
+
+        if plot_stats:
+            plt.clf()
+            fig, ax = plt.subplots()
+
+            L = len(trainer_stats['loss_term_1'])
+            x = list(range(L))
+            ax.plot(x, trainer_stats['loss_term_1'], label='term 1')
+            ax.plot(x, trainer_stats['loss_term_2'], label='term 2')
+            ax.plot(x, trainer_stats['loss_term_3'], label='term 3')
+
+
+            plt.xlabel('Samples')
+            plt.ylabel('Loss')
+            plt.title(f'Compare 3 terms in GCN loss.')
+            ax.legend()
+
+            save_dir = Path('observability')
+            save_dir.mkdir(exist_ok=True, parents=True)
+            save_path = save_dir / 'gcn_loss_terms_{self.config.mask_K}.png'
+            plt.savefig(save_path)
+        
         ckpt_path = self.checkpoint()
         logger.info(f'GCN checkpoint saved at {ckpt_path}')
         logger.info(f'GCN Training complete with final loss {final_loss}')

@@ -11,6 +11,7 @@ mimu/
 ├── model.py        # contains GCN and hooked models
 ├── trainer.py      # manages training
 ├── reporter.py     # plotting 
+├── utils.py        # data utils
 ```
 
 ### Artifacts 
@@ -20,6 +21,7 @@ mimu/
 ├── eval/           # metrics 
 ├── checkpoints/    # gcn and classifier
 ├── datasets/       # train/eval data for gcn and classsifier
+├── observability/  # training stats
 ```
 
 ### How to run 

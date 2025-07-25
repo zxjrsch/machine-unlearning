@@ -201,7 +201,9 @@ class Eval:
         layer_vect = torch.mul(mask, weight_vector)
         
         retain_rate = 1 - self.config.kappa / self.graph_generator.num_vertices
-        layer_vect /= retain_rate
+
+        # # no significant improvement
+        # layer_vect /= retain_rate     
 
         m, n = [p for p in self.classifier.parameters() if p.requires_grad][self.config.mask_layer].shape
         layer_matrix = layer_vect.unflatten(dim=0, sizes=(m,n))
