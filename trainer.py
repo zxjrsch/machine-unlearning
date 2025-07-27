@@ -19,7 +19,7 @@ from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
 from data import GCNBatch
-from model import HookedMNISTClassifier, HookedResNet, MaskingGCN
+from model import HookedMNISTClassifier, HookedResnet, MaskingGCN
 from utils import get_cifar10_train_loader, get_cifar10_val_loader
 
 global_config = OmegaConf.load("configs/config.yaml")
@@ -339,7 +339,11 @@ class GCNTrainer:
         final_loss = 0
 
         if plot_stats:
-            trainer_stats = GCNTrainerStatistics()
+            trainer_stats: GCNTrainerStatistics = {
+                "loss_term_1": [],
+                "loss_term_2": [],
+                "loss_term_3": [],
+            }
 
         for s in range(self.config.steps):
             gcn_batch, edge_matrix = self.graph_data_loader.next()
@@ -715,9 +719,11 @@ class ResnetTrainStatistics:
 class ResnetTrainerConfig:
     batch_size = 32
     lr = 1e-3
-    epochs = 5
+    epochs = 1
     logging_steps = 100
     device = global_config.device
+    checkpoint_dir = Path("checkpoints/resnet")
+    model_name: str = "resnet"
 
 
 class ResnetTrainer:
@@ -729,10 +735,10 @@ class ResnetTrainer:
         self.model = self.get_model()
 
     def get_model(self) -> nn.Module:
-        model = HookedResNet(num_classes=10, unlearning_target_layer_dim=1024)
+        model = HookedResnet(num_classes=10, unlearning_target_layer_dim=1024)
         return torch.compile(model)
 
-    def train(self):
+    def train(self, step_limit=1):
 
         torch.set_float32_matmul_precision("high")
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
@@ -741,8 +747,13 @@ class ResnetTrainer:
         self.model.train()
         self.model = self.model.to(self.config.device)
 
+        if step_limit is not None:
+            enumerator = list(enumerate(train_loader))[:step_limit]
+        else:
+            enumerator = enumerate(train_loader)
+
         for e in range(self.config.epochs):
-            for step, (inputs, targets) in enumerate(train_loader):
+            for step, (inputs, targets) in enumerator:
                 inputs = inputs.to(self.config.device)
                 targets = targets.to(self.config.device)
 
@@ -764,6 +775,11 @@ class ResnetTrainer:
                     self.train_statistics.plot()
                     self.val()
                     self.model.train()
+
+        checkpoint_path: Path = self.checkpoint()
+        logger.info(f"Resnet checkpoints saved to {checkpoint_path}")
+        logger.info("Resnet training complete.")
+        return checkpoint_path
 
     def val(self) -> None:
         criterion = nn.CrossEntropyLoss()
@@ -791,8 +807,22 @@ class ResnetTrainer:
         self.train_statistics.record_val_score(score)
 
         logger.info(
-            f"Test loss {round(test_loss, 5)} | Score {round(100 * score, 1)} %"
+            f"Resnet test loss {round(test_loss, 5)} | Score {round(100 * score, 1)} %"
         )
+
+    def checkpoint(self) -> Path:
+        """Returns checkpoint path."""
+        d: Union[str, Path] = self.config.checkpoint_dir
+        if type(d) is str:
+            d = Path(d)
+        d.mkdir(exist_ok=True, parents=True)
+
+        now = datetime.now().strftime("%Y_%m_%d_%H_%M")
+        file_name = self.config.model_name + "_" + now + ".pt"
+
+        checkpoint_path = d / file_name
+        torch.save(self.model.state_dict(), checkpoint_path)
+        return checkpoint_path
 
 
 if __name__ == "__main__":

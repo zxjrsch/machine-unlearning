@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable, List, Type, Union
 
@@ -28,22 +29,8 @@ class Gradients:
     gradient: torch.Tensor
 
 
-class HookedMNISTClassifier(nn.Module):
-    def __init__(
-        self,
-        mnist_classes: int = 10,
-        mnist_dim: int = 28 * 28,
-        include_bias: bool = False,
-        hidden_dims: List[int] = [128, 64],
-    ) -> None:
-        assert len(hidden_dims) > 0  # requires at least one hidden layer
-        super().__init__()
-
-        assert not include_bias  # current graph generation does not support bias
-
-        self.out_dim = mnist_classes
-        self.include_bias = include_bias
-        self.dim_array = [mnist_dim] + hidden_dims
+class HookedModel(ABC):
+    def __init__(self):
         self.hook_handles_activations: List[RemovableHandle] = []
         self.hook_handles_weights: List[RemovableHandle] = []
         self.hook_handles_gradients: List[RemovableHandle] = []
@@ -52,33 +39,17 @@ class HookedMNISTClassifier(nn.Module):
         self.activations: List[Activations] = []
         self.gradients: List[Gradients] = []
 
-        self.flatten = nn.Flatten()
-        self.hidden_layers = nn.ModuleDict(
-            {
-                f"hidden layer {i + 1}": self._make_single_layer(
-                    in_dim=self.dim_array[i], out_dim=self.dim_array[i + 1]
-                )
-                for i in range(len(self.dim_array) - 1)
-            }
-        )
-        self.classifier = nn.Linear(
-            in_features=self.dim_array[-1],
-            out_features=mnist_classes,
-            bias=self.include_bias,
-        )
+    @abstractmethod
+    def register_hooks_weight(self) -> None:
+        raise NotImplementedError()
 
-    def forward(self, x):
-        x = self.flatten(x)
-        for hidden_layer in self.hidden_layers.values():
-            x = hidden_layer(x)
-        # un-normalized logits (i.e. not proabilities)
-        return self.classifier(x)
+    @abstractmethod
+    def register_hooks_activation(self) -> None:
+        raise NotImplementedError()
 
-    def _make_single_layer(self, in_dim: int, out_dim: int) -> nn.Module:
-        return nn.Sequential(
-            nn.Linear(in_features=in_dim, out_features=out_dim, bias=self.include_bias),
-            nn.ReLU(),
-        )
+    @abstractmethod
+    def register_hooks_gradient(self) -> None:
+        raise NotImplementedError()
 
     def _hook_factory_weight(
         self, module_name: str
@@ -110,6 +81,88 @@ class HookedMNISTClassifier(nn.Module):
             self.gradients.append(g)
 
         return hook
+
+    def destroy_hooks_weight(self) -> None:
+        for handle in self.hook_handles_weights:
+            handle.remove()
+
+    def destroy_hooks_activation(self) -> None:
+        for handle in self.hook_handles_activations:
+            handle.remove()
+
+    def destroy_hooks_gradients(self) -> None:
+        for handle in self.hook_handles_gradients:
+            handle.remove()
+
+    def refresh(self) -> None:
+        self.destroy_hooks_activation()
+        self.destroy_hooks_weight()
+        self.destroy_hooks_gradients
+
+        self.activations = []
+        self.weights = []
+        self.gradients = []
+
+    def capture_mode(self, is_on: bool = True) -> None:
+        if is_on:
+            self.refresh()
+            self.register_hooks_activation()
+            # self.register_hooks_weight()
+            self.register_hooks_gradient()
+        else:
+            self.refresh()
+
+    def reset_activations(self) -> None:
+        # self.gradients = []
+        self.activations = []
+        # weights are not reset because they are fixed
+
+
+class HookedMNISTClassifier(nn.Module, HookedModel):
+    def __init__(
+        self,
+        mnist_classes: int = 10,
+        mnist_dim: int = 28 * 28,
+        include_bias: bool = False,
+        hidden_dims: List[int] = [128, 64],
+    ) -> None:
+        assert len(hidden_dims) > 0  # requires at least one hidden layer
+        HookedModel.__init__(self)
+        nn.Module.__init__(self)
+
+        assert not include_bias  # current graph generation does not support bias
+
+        self.out_dim = mnist_classes
+        self.include_bias = include_bias
+        self.dim_array = [mnist_dim] + hidden_dims
+
+        self.flatten = nn.Flatten()
+        self.hidden_layers = nn.ModuleDict(
+            {
+                f"hidden layer {i + 1}": self._make_single_layer(
+                    in_dim=self.dim_array[i], out_dim=self.dim_array[i + 1]
+                )
+                for i in range(len(self.dim_array) - 1)
+            }
+        )
+        self.classifier = nn.Linear(
+            in_features=self.dim_array[-1],
+            out_features=mnist_classes,
+            bias=self.include_bias,
+        )
+
+    def forward(self, x):
+        x = self.flatten(x)
+        for hidden_layer in self.hidden_layers.values():
+            x = hidden_layer(x)
+        # un-normalized logits (i.e. not proabilities)
+        return self.classifier(x)
+
+    def _make_single_layer(self, in_dim: int, out_dim: int) -> nn.Module:
+        return nn.Sequential(
+            nn.Linear(in_features=in_dim, out_features=out_dim, bias=self.include_bias),
+            nn.ReLU(),
+        )
 
     def register_hooks_weight(self) -> None:
         for layer_name, hidden_layer in self.hidden_layers.items():
@@ -146,41 +199,6 @@ class HookedMNISTClassifier(nn.Module):
             self._hook_factory_gradient(module_name="classifier")
         )
         self.hook_handles_gradients.append(h)
-
-    def destroy_hooks_weight(self) -> None:
-        for handle in self.hook_handles_weights:
-            handle.remove()
-
-    def destroy_hooks_activation(self) -> None:
-        for handle in self.hook_handles_activations:
-            handle.remove()
-
-    def destroy_hooks_gradients(self) -> None:
-        for handle in self.hook_handles_gradients:
-            handle.remove()
-
-    def refresh(self) -> None:
-        self.destroy_hooks_activation()
-        self.destroy_hooks_weight()
-        self.destroy_hooks_gradients
-
-        self.activations = []
-        self.weights = []
-        self.gradients = []
-
-    def capture_mode(self, is_on: bool = True) -> None:
-        if is_on:
-            self.refresh()
-            self.register_hooks_activation()
-            # self.register_hooks_weight()
-            self.register_hooks_gradient()
-        else:
-            self.refresh()
-
-    def reset_activations(self) -> None:
-        # self.gradients = []
-        self.activations = []
-        # weights are not reset because they are fixed
 
 
 class MaskingGCNConv(MessagePassing):
@@ -269,13 +287,14 @@ class MaskingGCN(nn.Module):
         return F.softmax(self.proj_out(x), dim=1).squeeze(-1)
 
 
-class HookedResNet(nn.Module):
+class HookedResnet(HookedModel, nn.Module):
     def __init__(
         self,
         num_classes: int = 10,
         unlearning_target_layer_dim: int = 1024,
     ) -> None:
-        super().__init__()
+        HookedModel.__init__(self)
+        nn.Module.__init__(self)
 
         self.num_classes = num_classes
         self.unlearning_target_layer_dim = unlearning_target_layer_dim
@@ -378,9 +397,32 @@ class HookedResNet(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
 
+    # --- register fwd/bwd hooks for targeted unlearning layer
+    def register_hooks_weight(self) -> None:
+
+        h = self.unlearning_target_feedforward.register_forward_hook(
+            self._hook_factory_weight(module_name="unlearning_target_feedforward")
+        )
+        self.hook_handles_weights.append(h)
+
+    def register_hooks_activation(self) -> None:
+        h = self.unlearning_target_feedforward.register_forward_hook(
+            self._hook_factory_activation(module_name="unlearning_target_feedforward")
+        )
+        self.hook_handles_activations.append(h)
+
+    def register_hooks_gradient(self) -> None:
+
+        h = self.unlearning_target_feedforward.register_full_backward_hook(
+            self._hook_factory_gradient(module_name="unlearning_target_feedforward")
+        )
+        self.hook_handles_gradients.append(h)
+
+    # ------------------------------------------------------------
+
 
 if __name__ == "__main__":
     import code
 
-    m = HookedResNet()
+    m = HookedResnet()
     code.interact(local=locals())
