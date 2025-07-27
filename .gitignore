@@ -18,5 +18,6 @@ checkpoints/
 eval/
 outputs/
 reports/
+observability/
 uv.lock
 .pytest_cache/

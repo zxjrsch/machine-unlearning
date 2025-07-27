@@ -9,6 +9,33 @@ global_config = OmegaConf.load("configs/config.yaml")
 transform = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
 
+def get_cifar10_train_loader(batch_size) -> DataLoader:
+
+    dataset = datasets.CIFAR10(
+        root=global_config.dataset_path,
+        train=True,
+        transform=transform,
+        download=True,
+    )
+
+    dataset.targets = torch.tensor(dataset.targets)
+
+    return DataLoader(dataset=dataset, batch_size=batch_size)
+
+
+def get_cifar10_val_loader(batch_size) -> DataLoader:
+
+    dataset = datasets.CIFAR10(
+        root=global_config.dataset_path,
+        train=False,
+        transform=transform,
+        download=True,
+    )
+    dataset.targets = torch.tensor(dataset.targets)
+
+    return DataLoader(dataset=dataset, batch_size=batch_size)
+
+
 def get_cifar10_forget_set(
     forget_class: int = 9, batch_size: int = 8, is_train: bool = False
 ) -> DataLoader:

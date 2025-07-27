@@ -19,7 +19,8 @@ from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
 from data import GCNBatch
-from model import HookedMNISTClassifier, MaskingGCN
+from model import HookedMNISTClassifier, HookedResNet, MaskingGCN
+from utils import get_cifar10_train_loader, get_cifar10_val_loader
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -100,7 +101,7 @@ class Trainer:
                 target = target.to(device)
 
                 preds = self.model(input)
-                train_loss: torch.Tensor = self.criterion(preds, target)
+                train_loss: Tensor = self.criterion(preds, target)
 
                 train_loss.backward()
                 adam_optimizer.step()
@@ -609,8 +610,192 @@ class UnlearningSFT:
         return checkpoint_path
 
 
-if __name__ == "__main__":
-    config = UnlearningSFTConfig()
+class ResnetTrainStatistics:
+    def __init__(
+        self,
+        val_interval_size: int,
+        save_dir: Path = Path("observability/Resnet"),
+        device: str = global_config.device,
+    ):
+        self.train_loss = []
+        self.test_loss = []
+        self.test_score = []
+        self.gradient_norm = []
+        self.save_dir = save_dir
+        self.device = device
+        self.val_interval_size = val_interval_size
 
-    trainer = UnlearningSFT(config)
-    trainer.finetune()
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+    def record_train_loss(self, loss: float) -> None:
+        self.train_loss.append(loss)
+
+    def record_grad_norm(self, grad_norm: float) -> None:
+        self.gradient_norm.append(grad_norm)
+
+    def record_val_loss(self, loss):
+        self.test_loss.append(loss)
+
+    def record_val_score(self, score):
+        self.test_score.append(score)
+
+    def get_grad_norm(self, model: nn.Module) -> float:
+
+        sum_of_squares = torch.tensor(0.0, device=self.device)
+        for p in model.parameters():
+            if p.requires_grad and p.grad is not None:
+                sum_of_squares += p.grad.norm(2).pow(2)
+
+        grad_norm = sum_of_squares.sqrt().item()
+        return grad_norm
+
+    def plot_loss(self):
+
+        plt.clf()
+        x = list(range(len(self.train_loss)))
+        plt.plot(x, self.train_loss, label="train loss")
+
+        if len(self.test_loss) > 0:
+            z = [self.val_interval_size]
+            for _ in self.test_loss[1:]:
+                z.append(z[-1] + self.val_interval_size)
+            plt.plot(z, self.test_loss, label="test loss")
+
+        plt.xlabel("step")
+        plt.ylabel("loss")
+        plt.title("Resnet Loss")
+
+        plt.grid(True)
+        plt.legend()
+
+        save_path = self.save_dir / "train_val_loss.png"
+        plt.savefig(
+            save_path, dpi=1000
+        )  # You can change the filename and dpi as needed
+        plt.clf()
+
+    def plot_grad_norm(self):
+
+        plt.clf()
+        x = list(range(len(self.gradient_norm)))
+        plt.plot(x, self.gradient_norm)
+        plt.xlabel("train step")
+        plt.ylabel("grad norm")
+        plt.title("Resnet Gradient Norm")
+        plt.grid(True)
+
+        save_path = self.save_dir / "grad_norm.png"
+        plt.savefig(
+            save_path, dpi=1000
+        )  # You can change the filename and dpi as needed
+        plt.clf()
+
+    def plot_test_score(self):
+        plt.clf()
+        x = list(range(len(self.test_score)))
+        plt.plot(x, self.test_score)
+        plt.xlabel("test step")
+        plt.ylabel("test score")
+        plt.title("Resnet Validation Score")
+        plt.grid(True)
+
+        save_path = self.save_dir / "test_score.png"
+        plt.savefig(
+            save_path, dpi=1000
+        )  # You can change the filename and dpi as needed
+        plt.clf()
+
+    def plot(self):
+        self.plot_loss()
+        self.plot_grad_norm()
+        self.plot_test_score()
+
+
+@dataclass
+class ResnetTrainerConfig:
+    batch_size = 32
+    lr = 1e-3
+    epochs = 5
+    logging_steps = 100
+    device = global_config.device
+
+
+class ResnetTrainer:
+    def __init__(self, config: ResnetTrainerConfig):
+        self.config = config
+        self.train_statistics = ResnetTrainStatistics(
+            val_interval_size=self.config.logging_steps
+        )
+        self.model = self.get_model()
+
+    def get_model(self) -> nn.Module:
+        model = HookedResNet(num_classes=10, unlearning_target_layer_dim=1024)
+        return torch.compile(model)
+
+    def train(self):
+
+        torch.set_float32_matmul_precision("high")
+        adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
+        criterion = nn.CrossEntropyLoss()
+        train_loader = get_cifar10_train_loader(batch_size=self.config.batch_size)
+        self.model.train()
+        self.model = self.model.to(self.config.device)
+
+        for e in range(self.config.epochs):
+            for step, (inputs, targets) in enumerate(train_loader):
+                inputs = inputs.to(self.config.device)
+                targets = targets.to(self.config.device)
+
+                preds = self.model(inputs)
+                train_loss: Tensor = criterion(preds, targets)
+                train_loss.backward()
+                adam_optimizer.step()
+
+                grad_norm: float = self.train_statistics.get_grad_norm(self.model)
+                self.train_statistics.record_grad_norm(grad_norm)
+                self.train_statistics.record_train_loss(train_loss.item())
+
+                adam_optimizer.zero_grad()
+
+                if step % self.config.logging_steps == 0:
+                    logger.info(
+                        f"Epoch {e} | Step {step} | ResNet train loss {train_loss.item()} | Grad norm {grad_norm}"
+                    )
+                    self.train_statistics.plot()
+                    self.val()
+                    self.model.train()
+
+    def val(self) -> None:
+        criterion = nn.CrossEntropyLoss()
+
+        self.model = self.model.to(global_config.device)
+        self.model.eval()
+        val_loader = get_cifar10_val_loader(batch_size=self.config.batch_size)
+
+        test_loss, num_batches = 0, len(val_loader)
+        score, total = 0, len(val_loader.dataset)
+        with torch.no_grad():
+            for i, (input, target) in enumerate(val_loader):
+                input = input.to(global_config.device)
+                target = target.to(global_config.device)
+
+                preds: torch.Tensor = self.model(input)
+                test_loss += criterion(preds, target).item()
+
+                score += (preds.argmax(1) == target).type(torch.float).sum().item()
+
+            test_loss /= num_batches
+            score /= total
+
+        self.train_statistics.record_val_loss(test_loss)
+        self.train_statistics.record_val_score(score)
+
+        logger.info(
+            f"Test loss {round(test_loss, 5)} | Score {round(100 * score, 1)} %"
+        )
+
+
+if __name__ == "__main__":
+    config = ResnetTrainerConfig()
+    trainer = ResnetTrainer(config)
+    trainer.train()
