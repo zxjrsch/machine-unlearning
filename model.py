@@ -1,16 +1,11 @@
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Callable, Iterator, List, Tuple, Union, Type, Optional
+from typing import Callable, List, Type, Union
 
 import torch
 import torch.nn.functional as F
-from torch import nn, Tensor
-from torch.nn.parameter import Parameter
+from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
 from torch_geometric.nn import GCNConv, MessagePassing
-from torchinfo import summary
-
-from torchvision.models import ResNet
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 
 
@@ -20,10 +15,12 @@ class Activations:
     input_activation: torch.Tensor
     output_activation: torch.Tensor
 
+
 @dataclass
 class Weights:
     module_name: str
     module_weights: torch.Tensor
+
 
 @dataclass
 class Gradients:
@@ -32,21 +29,21 @@ class Gradients:
 
 
 class HookedMNISTClassifier(nn.Module):
-    def __init__(self, 
-            mnist_classes: int = 10,
-            mnist_dim: int = 28*28,
-            include_bias: bool = False,
-            hidden_dims: List[int] = [128, 64],
+    def __init__(
+        self,
+        mnist_classes: int = 10,
+        mnist_dim: int = 28 * 28,
+        include_bias: bool = False,
+        hidden_dims: List[int] = [128, 64],
     ) -> None:
-        
-        assert len(hidden_dims) > 0 # requires at least one hidden layer 
+        assert len(hidden_dims) > 0  # requires at least one hidden layer
         super().__init__()
 
-        assert not include_bias     # current graph generation does not support bias
-        
+        assert not include_bias  # current graph generation does not support bias
+
         self.out_dim = mnist_classes
-        self.include_bias = include_bias 
-        self.dim_array = [mnist_dim] + hidden_dims 
+        self.include_bias = include_bias
+        self.dim_array = [mnist_dim] + hidden_dims
         self.hook_handles_activations: List[RemovableHandle] = []
         self.hook_handles_weights: List[RemovableHandle] = []
         self.hook_handles_gradients: List[RemovableHandle] = []
@@ -56,70 +53,99 @@ class HookedMNISTClassifier(nn.Module):
         self.gradients: List[Gradients] = []
 
         self.flatten = nn.Flatten()
-        self.hidden_layers = nn.ModuleDict({
-            f'hidden layer {i+1}': self._make_single_layer(in_dim=self.dim_array[i], out_dim=self.dim_array[i+1])
-            for i in range(len(self.dim_array)-1)
-        })
-        self.classifier = nn.Linear(in_features=self.dim_array[-1], out_features=mnist_classes, bias=self.include_bias)
-
+        self.hidden_layers = nn.ModuleDict(
+            {
+                f"hidden layer {i + 1}": self._make_single_layer(
+                    in_dim=self.dim_array[i], out_dim=self.dim_array[i + 1]
+                )
+                for i in range(len(self.dim_array) - 1)
+            }
+        )
+        self.classifier = nn.Linear(
+            in_features=self.dim_array[-1],
+            out_features=mnist_classes,
+            bias=self.include_bias,
+        )
 
     def forward(self, x):
         x = self.flatten(x)
         for hidden_layer in self.hidden_layers.values():
             x = hidden_layer(x)
-        return self.classifier(x) # un-normalized logits (i.e. not proabilities)
+        # un-normalized logits (i.e. not proabilities)
+        return self.classifier(x)
 
     def _make_single_layer(self, in_dim: int, out_dim: int) -> nn.Module:
         return nn.Sequential(
-            nn.Linear(in_features=in_dim, out_features=out_dim, bias=self.include_bias), 
-            nn.ReLU()
+            nn.Linear(in_features=in_dim, out_features=out_dim, bias=self.include_bias),
+            nn.ReLU(),
         )
-    
-    def _hook_factory_weight(self, module_name: str) -> Callable[[nn.Module, torch.Tensor, torch.Tensor], None]:
+
+    def _hook_factory_weight(
+        self, module_name: str
+    ) -> Callable[[nn.Module, torch.Tensor, torch.Tensor], None]:
         def hook(module, input, output):
             w = Weights(module_name=module_name, module_weights=module)
             self.weights.append(w)
-        return hook 
-    
-    def _hook_factory_activation(self, module_name: str) -> Callable[[nn.Module, torch.Tensor, torch.Tensor], None]:
+
+        return hook
+
+    def _hook_factory_activation(
+        self, module_name: str
+    ) -> Callable[[nn.Module, torch.Tensor, torch.Tensor], None]:
         def hook(module, input, output):
-            a = Activations(module_name=module_name, input_activation=input, output_activation=output)
+            a = Activations(
+                module_name=module_name,
+                input_activation=input,
+                output_activation=output,
+            )
             self.activations.append(a)
-        return hook 
-    
-    def _hook_factory_gradient(self, module_name: str) -> Callable[[nn.Module, torch.Tensor, torch.Tensor], None]:
+
+        return hook
+
+    def _hook_factory_gradient(
+        self, module_name: str
+    ) -> Callable[[nn.Module, torch.Tensor, torch.Tensor], None]:
         def hook(module, in_grad, out_grad):
             g = Gradients(module_name=module_name, gradient=out_grad)
             self.gradients.append(g)
+
         return hook
 
     def register_hooks_weight(self) -> None:
-
         for layer_name, hidden_layer in self.hidden_layers.items():
-            h = hidden_layer.register_forward_hook(self._hook_factory_weight(module_name=layer_name))
+            h = hidden_layer.register_forward_hook(
+                self._hook_factory_weight(module_name=layer_name)
+            )
             self.hook_handles_weights.append(h)
 
-        h = self.classifier.register_forward_hook(self._hook_factory_weight(module_name='classifier'))
+        h = self.classifier.register_forward_hook(
+            self._hook_factory_weight(module_name="classifier")
+        )
         self.hook_handles_weights.append(h)
 
     def register_hooks_activation(self) -> None:
-
         for layer_name, hidden_layer in self.hidden_layers.items():
-            h = hidden_layer.register_forward_hook(self._hook_factory_activation(module_name=layer_name))
+            h = hidden_layer.register_forward_hook(
+                self._hook_factory_activation(module_name=layer_name)
+            )
             self.hook_handles_activations.append(h)
 
-        h = self.classifier.register_forward_hook(self._hook_factory_activation(module_name='classifier'))
+        h = self.classifier.register_forward_hook(
+            self._hook_factory_activation(module_name="classifier")
+        )
         self.hook_handles_activations.append(h)
 
     def register_hooks_gradient(self) -> None:
-
         for layer_name, hidden_layer in self.hidden_layers.items():
-            h = hidden_layer.register_full_backward_hook(self._hook_factory_gradient(module_name=layer_name))
+            h = hidden_layer.register_full_backward_hook(
+                self._hook_factory_gradient(module_name=layer_name)
+            )
             self.hook_handles_gradients.append(h)
 
-        h = self.classifier.register_full_backward_hook(self._hook_factory_gradient(module_name='classifier'))
+        h = self.classifier.register_full_backward_hook(
+            self._hook_factory_gradient(module_name="classifier")
+        )
         self.hook_handles_gradients.append(h)
-
 
     def destroy_hooks_weight(self) -> None:
         for handle in self.hook_handles_weights:
@@ -137,11 +163,10 @@ class HookedMNISTClassifier(nn.Module):
         self.destroy_hooks_activation()
         self.destroy_hooks_weight()
         self.destroy_hooks_gradients
-        
+
         self.activations = []
         self.weights = []
         self.gradients = []
-
 
     def capture_mode(self, is_on: bool = True) -> None:
         if is_on:
@@ -152,36 +177,40 @@ class HookedMNISTClassifier(nn.Module):
         else:
             self.refresh()
 
-
     def reset_activations(self) -> None:
         # self.gradients = []
-        self.activations = []   
+        self.activations = []
         # weights are not reset because they are fixed
 
 
 class MaskingGCNConv(MessagePassing):
-
     def __init__(self, in_channels, out_channels):
-        super().__init__(aggr='mean')
+        super().__init__(aggr="mean")
 
-        self.A = nn.Linear(in_channels, out_channels, bias=False) 
-        self.B = nn.Linear(in_channels, out_channels, bias=False) 
+        self.A = nn.Linear(in_channels, out_channels, bias=False)
+        self.B = nn.Linear(in_channels, out_channels, bias=False)
 
     def forward(self, x, edge_index):
-       
-       # collects mean aggregated message
-       avg_msg = self.propagate(edge_index=edge_index, x=x)
+        # collects mean aggregated message
+        avg_msg = self.propagate(edge_index=edge_index, x=x)
 
-       # linear projection
-       return self.A(avg_msg) + self.B(x)
+        # linear projection
+        return self.A(avg_msg) + self.B(x)
 
     def message(self, x_j):
         return x_j
 
 
 class MaskingGCN(nn.Module):
-
-    def __init__(self, num_node_features=4, num_message_passing_rounds=3, hidden_dim=32, use_deg_avg=False, output_logits=True, use_relu=False):
+    def __init__(
+        self,
+        num_node_features=4,
+        num_message_passing_rounds=3,
+        hidden_dim=32,
+        use_deg_avg=False,
+        output_logits=True,
+        use_relu=False,
+    ):
         """
         Current node features:
             1) weight
@@ -189,8 +218,8 @@ class MaskingGCN(nn.Module):
             3) input activation
             4) output activation
 
-        GCN Message Passing Rounds: 
-            Recommended value is (# layers in masked network - 1) to ensure full receptive field. 
+        GCN Message Passing Rounds:
+            Recommended value is (# layers in masked network - 1) to ensure full receptive field.
             For example 17 is recommended for ResNet-18 experiments.
 
         use_deg_avg
@@ -207,21 +236,24 @@ class MaskingGCN(nn.Module):
 
         if use_deg_avg:
             # a stack of message passing layers
-            self.conv = nn.ModuleDict({
-                f"Convolution layer {i}" : GCNConv(hidden_dim, hidden_dim)
-                for i in range(num_message_passing_rounds-1)
-            })
+            self.conv = nn.ModuleDict(
+                {
+                    f"Convolution layer {i}": GCNConv(hidden_dim, hidden_dim)
+                    for i in range(num_message_passing_rounds - 1)
+                }
+            )
         else:
-             # a stack of message passing layers
-            self.conv = nn.ModuleDict({
-                f"Convolution layer {i}" : MaskingGCNConv(hidden_dim, hidden_dim)
-                for i in range(num_message_passing_rounds-1)
-            })
+            # a stack of message passing layers
+            self.conv = nn.ModuleDict(
+                {
+                    f"Convolution layer {i}": MaskingGCNConv(hidden_dim, hidden_dim)
+                    for i in range(num_message_passing_rounds - 1)
+                }
+            )
 
         self.proj_out = nn.Linear(hidden_dim, 1)
-            
-    def forward(self, x, edge_index):
 
+    def forward(self, x, edge_index):
         x = self.proj_in(x, edge_index)
         for conv_layer in self.conv.values():
             x = conv_layer(x, edge_index)
@@ -235,7 +267,7 @@ class MaskingGCN(nn.Module):
 
         # normalized probability
         return F.softmax(self.proj_out(x), dim=1).squeeze(-1)
-    
+
 
 class HookedResNet(nn.Module):
     def __init__(
@@ -253,7 +285,9 @@ class HookedResNet(nn.Module):
 
         self.groups = 1
         self.base_width = 64
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1 = nn.Conv2d(
+            3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False
+        )
         self.bn1 = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -263,7 +297,9 @@ class HookedResNet(nn.Module):
         self.layer4 = self._make_layer(BasicBlock, 512, 2, stride=2, dilate=False)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
-        self.unlearning_target_feedforward = nn.Linear(512 * BasicBlock.expansion, unlearning_target_layer_dim)
+        self.unlearning_target_feedforward = nn.Linear(
+            512 * BasicBlock.expansion, unlearning_target_layer_dim
+        )
 
         self.fc = nn.Linear(unlearning_target_layer_dim, num_classes)
 
@@ -296,7 +332,14 @@ class HookedResNet(nn.Module):
         layers = []
         layers.append(
             block(
-                self.inplanes, planes, stride, downsample, self.groups, self.base_width, previous_dilation, nn.BatchNorm2d
+                self.inplanes,
+                planes,
+                stride,
+                downsample,
+                self.groups,
+                self.base_width,
+                previous_dilation,
+                nn.BatchNorm2d,
             )
         )
         self.inplanes = planes * block.expansion
@@ -335,7 +378,9 @@ class HookedResNet(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self._forward_impl(x)
 
-if __name__ == '__main__':
-    import code 
+
+if __name__ == "__main__":
+    import code
+
     m = HookedResNet()
     code.interact(local=locals())

@@ -1,17 +1,12 @@
-import glob
-import os
 from itertools import product
-from pathlib import Path
 
-import torch
 from loguru import logger
 
 from data import GraphGenerator
 from eval import Eval, EvalConfig
 from model import HookedMNISTClassifier
 from reporter import Reporter, ReporterConfig
-from trainer import (GCNTrainer, GCNTrainerConfig, GraphDataLoader, Trainer,
-                     TrainerConfig)
+from trainer import GCNTrainer, GCNTrainerConfig, Trainer, TrainerConfig
 
 
 def train_mnist_classifier():
@@ -20,10 +15,9 @@ def train_mnist_classifier():
     checkpoint_path = trainer.train()
     return checkpoint_path
 
-def generate_graph(checkpoint_path):
 
-    dg = GraphGenerator(model=HookedMNISTClassifier(), 
-                        checkpoint_path=checkpoint_path)
+def generate_graph(checkpoint_path):
+    dg = GraphGenerator(model=HookedMNISTClassifier(), checkpoint_path=checkpoint_path)
 
     # # If you wish to obtain single training data points in the form of PyG Data
     # data = dg.get_data()
@@ -31,6 +25,7 @@ def generate_graph(checkpoint_path):
 
     # this saves data in batches
     dg.save_forward_backward_features(limit=2048)
+
 
 def train_gcn(src_checkpoint, topK=2500):
     config = GCNTrainerConfig(src_checkpoint=src_checkpoint, mask_K=topK)
@@ -46,29 +41,33 @@ def train_gcn(src_checkpoint, topK=2500):
     # for i in range(5):
     #     data_loader.next()
 
+
 def evaluation(gcn_path, classifier_path, topK=2500, kappa=2000):
-    # for real usecase 
-    config = EvalConfig(gcn_path=gcn_path, classifier_path=classifier_path, topK=topK, kappa=kappa)
+    # for real usecase
+    config = EvalConfig(
+        gcn_path=gcn_path, classifier_path=classifier_path, topK=topK, kappa=kappa
+    )
     eval = Eval(config)
     return eval.eval()
+
 
 def viz():
     config = ReporterConfig()
     reporter = Reporter(config)
     reporter.plot()
 
-def main():
 
-    logger.info(f'-------- Training Classifier -------')
+def main():
+    logger.info(f"-------- Training Classifier -------")
     # checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
     classifier_checkpoint_path = train_mnist_classifier()
 
-    logger.info(f'-------- Generating GCN Training Data -------')
+    logger.info(f"-------- Generating GCN Training Data -------")
     generate_graph(checkpoint_path=classifier_checkpoint_path)
 
     # full sweep
     topK_array = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
-    kappa_array = list(range(100, 7000+1, 1000))
+    kappa_array = list(range(100, 7000 + 1, 1000))
 
     # partial sweep to save time
     topK_array = [8000]
@@ -79,15 +78,21 @@ def main():
     i = 0
     for topK, kappa in experiments:
         i += 1
-        logger.info(f'------- Starting exp {i} of {len(experiments)} | top-{topK} kappa-{kappa}  ------')
+        logger.info(
+            f"------- Starting exp {i} of {len(experiments)} | top-{topK} kappa-{kappa}  ------"
+        )
         gcn_checkpoint_path = train_gcn(classifier_checkpoint_path, topK=topK)
-        metrics = evaluation(gcn_path=gcn_checkpoint_path, classifier_path=classifier_checkpoint_path, topK=topK, kappa=kappa)
-        logger.info(f'------- Completed top-{topK} kappa-{kappa} experiment ------')
+        metrics = evaluation(
+            gcn_path=gcn_checkpoint_path,
+            classifier_path=classifier_checkpoint_path,
+            topK=topK,
+            kappa=kappa,
+        )
+        logger.info(f"------- Completed top-{topK} kappa-{kappa} experiment ------")
 
     viz()
-    logger.info(f'-------- Experiment Complete -------')
+    logger.info(f"-------- Experiment Complete -------")
 
 
 if __name__ == "__main__":
     main()
-
