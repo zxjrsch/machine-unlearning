@@ -8,4 +8,4 @@ unzip valid.zip -d valid
 
 # nohup hf download jameelkhalidawan/Plant_Detection_Classification --repo-type dataset --local-dir ./datasets/plant-classification  --max-workers 50 > download.log 2>&1 &
 
-# nohup hf download ILSVRC/imagenet-1k --repo-type dataset --local-dir ./datasets/imagenet-1k --token hf_********* --max-workers 50 > imagenet-1k.log  2>&1 &
+# nohup hf download ILSVRC/imagenet-1k --repo-type dataset --local-dir ./datasets/imagenet-1k --token hf_******* --include="data/train_images_0.tar.gz" --max-workers 50 > imagenet-1k.log  2>&1 &

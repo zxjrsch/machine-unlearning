@@ -19,14 +19,6 @@ from model import Activations, HookedMNISTClassifier, HookedResnet
 global_config = OmegaConf.load("configs/config.yaml")
 
 
-@dataclass
-class SupportedData:
-    MNIST = "MNIST"
-    CIFAR10 = "CIFAR10"
-    CIFAR100 = "CIFAR100"
-    SVHN = "SVHN"
-
-
 class ModelInspector:
     def __init__(self, model: nn.Module) -> None:
         self.model = model
