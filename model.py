@@ -97,7 +97,7 @@ class HookedModel(ABC):
     def refresh(self) -> None:
         self.destroy_hooks_activation()
         self.destroy_hooks_weight()
-        self.destroy_hooks_gradients
+        self.destroy_hooks_gradients()
 
         self.activations = []
         self.weights = []

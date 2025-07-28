@@ -131,6 +131,6 @@ class Reporter:
 
 ### Dev
 
-```
+```bash
 uv run pre-commit run --all-files
 ```

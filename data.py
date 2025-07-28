@@ -14,9 +14,17 @@ from torchinfo import summary
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
-from model import Activations, HookedMNISTClassifier
+from model import Activations, HookedMNISTClassifier, HookedResnet
 
 global_config = OmegaConf.load("configs/config.yaml")
+
+
+@dataclass
+class SupportedData:
+    MNIST = "MNIST"
+    CIFAR10 = "CIFAR10"
+    CIFAR100 = "CIFAR100"
+    SVHN = "SVHN"
 
 
 class ModelInspector:
@@ -100,11 +108,11 @@ class GCNBatch:
 class GraphGenerator(ModelInspector):
     def __init__(
         self,
-        model: HookedMNISTClassifier,
+        model: HookedMNISTClassifier | HookedResnet,
         checkpoint_path: Union[Path, None] = None,
         graph_dataset_dir: Path = Path("./datasets/Graphs"),
         process_save_batch_size: int = 64,
-        forget_digit: int = 9,
+        forget_class: int = 9,
         device: str = global_config.device,
         mask_layer: Union[
             int, None
@@ -124,7 +132,7 @@ class GraphGenerator(ModelInspector):
 
         self._save_redundant_features = save_redundant_features
 
-        self.forget_digit = forget_digit
+        self.forget_class = forget_class
         self.process_save_batch_size = process_save_batch_size
         self.device = device
         self.data_loader: DataLoader = self.get_dataloader()
@@ -140,15 +148,14 @@ class GraphGenerator(ModelInspector):
         # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1 for feature extraction
         return DataLoader(dataset=dataset, batch_size=1)
 
-    def reset_forget_digit(
+    def reset_forget_class(
         self, digit: Union[int, None], data_path="./datasets"
     ) -> DataLoader:
         if digit is None:
-            self.forget_digit = None
+            self.forget_class = None
             self.data_loader = self.get_dataloader(data_path=data_path)
         else:
-            assert 0 <= digit <= 9
-            self.forget_digit = digit
+            self.forget_class = digit
             self.data_loader = self.get_single_class_dataloader(data_path=data_path)
 
         logger.info(f"Resetting graph generator dataloader to digit: {digit}")
@@ -156,7 +163,7 @@ class GraphGenerator(ModelInspector):
 
     def get_single_class_dataloader(self, data_path: str = "./datasets") -> DataLoader:
         dataset = MNIST(root=data_path, train=True, transform=ToTensor(), download=True)
-        subset_indices = (dataset.targets == self.forget_digit).nonzero(as_tuple=True)[
+        subset_indices = (dataset.targets == self.forget_class).nonzero(as_tuple=True)[
             0
         ]
         subset = torch.utils.data.Subset(dataset, subset_indices)
@@ -453,7 +460,7 @@ class GraphGenerator(ModelInspector):
             input_batch.append(input)
             target_batch.append(target)
             input, target = input.to(self.device), target.to(self.device)
-            # assert torch.all(target == self.forget_digit)   # sanity check
+            # assert torch.all(target == self.forget_class)   # sanity check
             preds = self.model(input)
             loss: Tensor = self.loss_fn(preds, target)
             loss.backward()
@@ -535,7 +542,7 @@ class GraphGenerator(ModelInspector):
         for i, (input, target) in enumerate(self.data_loader):
             if i == idx:
                 input, target = input.to(self.device), target.to(self.device)
-                # assert torch.all(target == self.forget_digit)   # sanity check
+                # assert torch.all(target == self.forget_class)   # sanity check
                 preds = self.model(input)
                 loss: Tensor = self.loss_fn(preds, target)
                 loss.backward()
