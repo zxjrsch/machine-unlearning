@@ -8,6 +8,9 @@ from model import HookedMNISTClassifier
 from reporter import Reporter, ReporterConfig
 from trainer import GCNTrainer, GCNTrainerConfig, Trainer, TrainerConfig
 
+from utils_data import SupportedDatasets
+from model import SupportedVisionModels
+
 
 def train_mnist_classifier():
     config = TrainerConfig()
@@ -17,14 +20,17 @@ def train_mnist_classifier():
 
 
 def generate_graph(checkpoint_path):
-    dg = GraphGenerator(model=HookedMNISTClassifier(), checkpoint_path=checkpoint_path)
+    graph_data_cardinaility = 2048
+    vision_model_type = SupportedVisionModels.HookedMNISTClassifier
+    unlearning_dataset = SupportedDatasets.MNIST
+    dg = GraphGenerator(vision_model_type=vision_model_type, checkpoint_path=checkpoint_path, graph_data_cardinaility=graph_data_cardinaility)
 
     # # If you wish to obtain single training data points in the form of PyG Data
     # data = dg.get_data()
     # logger.info(data)
 
     # this saves data in batches
-    dg.save_forward_backward_features(limit=2048)
+    dg.save_forward_backward_features()
 
 
 def train_gcn(src_checkpoint, topK=2500):

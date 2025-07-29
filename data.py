@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, List, Tuple, Union
+from typing import Any, Iterator, List, Tuple, Union, Optional, Type
 
 import torch
 from loguru import logger
@@ -14,14 +14,15 @@ from torchinfo import summary
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
-from model import Activations, HookedMNISTClassifier
+from model import Activations, HookedMNISTClassifier, vision_model_loader, SupportedVisionModels, HookedModel
+from utils_data import SupportedDatasets, get_unlearning_dataset, UnlearningDataset
 
 global_config = OmegaConf.load("configs/config.yaml")
 
 
 class ModelInspector:
     def __init__(self, model: nn.Module) -> None:
-        self.model = model
+        self.model: nn.Module = model
 
     def inspect(self):
         summary(self.model)
@@ -100,29 +101,45 @@ class GCNBatch:
 class GraphGenerator(ModelInspector):
     def __init__(
         self,
-        model,
-        checkpoint_path: Union[Path, None] = None,
+        vision_model_type: SupportedVisionModels,
+        unlearning_dataset: SupportedDatasets,
+        checkpoint_path: Path,
         graph_dataset_dir: Path = Path("./datasets/Graphs"),
+        graph_data_cardinaility: Optional[int] = 1024,
         process_save_batch_size: int = 64,
         forget_class: int = 9,
-        device: str = global_config.device,
+        device: str = global_config["device"],
         mask_layer: Union[
             int, None
-        ] = -2,  # specify one layer to mask, if None then all layers selected
+        ] = -2,  
         save_redundant_features: bool = True,
     ) -> None:
-        super().__init__(model)
+        
+        """
+           If mask_layer is int, it specifies one layer to mask, however if 
+           mask_layer=None then all layers are selected. None is not generally supported
+           for this unlearning codebase due to the high computation cost of training such GCN.
+        """
+        
+        model = vision_model_loader(model_type=vision_model_type, 
+                                    load_pretrained_from_path=checkpoint_path
+                )
+        super().__init__(model=model)
 
-        if checkpoint_path is not None:
-            self.model = torch.compile(self.model)
-            self.model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
-            logger.info(f"Loaded pretrained model from {checkpoint_path}")
+        self.unlearning_dataset: UnlearningDataset = get_unlearning_dataset(
+            dataset=unlearning_dataset,
+            forget_class=forget_class,
+            batch_size=process_save_batch_size,
+        )
+
+        graph_dataset_dir = graph_dataset_dir / f"{self.model.model_string}_{self.unlearning_dataset.dataset_name}"
 
         graph_dataset_dir.mkdir(exist_ok=True, parents=True)
         self.graph_dataset_dir = graph_dataset_dir
         self.mask_layer = self.validate_layer(mask_layer)
 
-        self._save_redundant_features = save_redundant_features
+        self.save_redundant_features = save_redundant_features
+        self.graph_data_cardinaility = graph_data_cardinaility
 
         self.forget_class = forget_class
         self.process_save_batch_size = process_save_batch_size
@@ -131,37 +148,21 @@ class GraphGenerator(ModelInspector):
         self.num_vertices = self.get_num_vertices()
         self.weight_feature = self.get_weight_feature()
         self.edge_matrix = self.get_edge_matrix()
+
+        # currently cross entropy loss is suitable across all image classification taskss
         self.loss_fn = nn.CrossEntropyLoss()
         self.analyze()
 
-    def get_dataloader(self, data_path: str = "./datasets") -> DataLoader:
-        dataset = MNIST(root=data_path, train=True, transform=ToTensor(), download=True)
-
+    def get_dataloader(self, is_train: bool = False) -> DataLoader:
+        old_batch_size = self.unlearning_dataset.batch_size
         # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1 for feature extraction
-        return DataLoader(dataset=dataset, batch_size=1)
-
-    def reset_forget_class(
-        self, digit: Union[int, None], data_path="./datasets"
-    ) -> DataLoader:
-        if digit is None:
-            self.forget_class = None
-            self.data_loader = self.get_dataloader(data_path=data_path)
+        self.unlearning_dataset.batch_size = 1
+        if is_train:
+            loader = self.unlearning_dataset.get_train_loader()
         else:
-            self.forget_class = digit
-            self.data_loader = self.get_single_class_dataloader(data_path=data_path)
-
-        logger.info(f"Resetting graph generator dataloader to digit: {digit}")
-        return self.data_loader
-
-    def get_single_class_dataloader(self, data_path: str = "./datasets") -> DataLoader:
-        dataset = MNIST(root=data_path, train=True, transform=ToTensor(), download=True)
-        subset_indices = (dataset.targets == self.forget_class).nonzero(as_tuple=True)[
-            0
-        ]
-        subset = torch.utils.data.Subset(dataset, subset_indices)
-
-        # Important: we want per sample grad, not batch-averaged grad, hence batch_size=1 for feature extraction
-        return DataLoader(dataset=subset, batch_size=1)
+            loader = self.unlearning_dataset.get_val_loader()
+        self.unlearning_dataset.batch_size = old_batch_size
+        return loader
 
     def analyze(self) -> None:
         om = math.floor(math.log(self.num_vertices, 10))
@@ -243,7 +244,7 @@ class GraphGenerator(ModelInspector):
 
         edge_matrix = torch.cat(edge_matrix_list, dim=1)
 
-        if self._save_redundant_features:
+        if self.save_redundant_features:
             file_name: Path = self.graph_dataset_dir / "graph_edge_matrix.pt"
             torch.save(edge_matrix, file_name)
             logger.info(f"Edge matrix saved at {file_name}")
@@ -326,7 +327,7 @@ class GraphGenerator(ModelInspector):
         edge_matrix = torch.cat(edge_matrices_list, dim=1)
         torch.cuda.empty_cache()
 
-        if self._save_redundant_features:
+        if self.save_redundant_features:
             file_name: Path = self.graph_dataset_dir / "graph_edge_matrix.pt"
             torch.save(edge_matrix, file_name)
             logger.info(f"Edge matrix saved at {file_name}")
@@ -426,21 +427,25 @@ class GraphGenerator(ModelInspector):
 
         return in_features_vector, out_features_vector
 
-    def save_forward_backward_features(self, limit: Union[int, None] = 256) -> None:
+    def save_forward_backward_features(self) -> None:
         """Saves grads and activations."""
 
         assert (
             self.data_loader
         )  # data loader must be initialized before getting gradient features
-        self.model: HookedMNISTClassifier = self.model.to(self.device)
+        self.model: HookedModel = self.model.to(self.device)
         self.weight_feature = self.weight_feature.to(self.device)
 
         self.model.capture_mode(is_on=True)
         self.model.eval()
 
-        eumerator = list(enumerate(self.data_loader))
-        if limit is not None:
-            eumerator = eumerator[:limit]
+        
+        if self.graph_data_cardinaility is None:
+            eumerator = list(enumerate(self.data_loader))
+        else:
+            logger.info(f'Using graph_data_cardinaility = {self.graph_data_cardinaility}')
+            eumerator = eumerator[:self.graph_data_cardinaility]
+
 
         feature_batch, batch_idx, total_batches = (
             [],
@@ -525,7 +530,7 @@ class GraphGenerator(ModelInspector):
         assert (
             self.data_loader
         )  # data loader must be initialized before getting gradient features
-        self.model: HookedMNISTClassifier = self.model.to(self.device)
+        self.model: HookedModel = self.model.to(self.device)
         self.weight_feature = self.weight_feature.to(self.device)
 
         self.model.capture_mode(is_on=True)
@@ -575,7 +580,7 @@ class GraphGenerator(ModelInspector):
         """
         """Saves grads and activations."""
 
-        self.model: HookedMNISTClassifier = self.model.to(self.device)
+        self.model: HookedModel = self.model.to(self.device)
         self.weight_feature = self.weight_feature.to(self.device)
 
         self.model.capture_mode(is_on=True)

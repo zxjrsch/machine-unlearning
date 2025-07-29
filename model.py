@@ -36,6 +36,7 @@ def model_factory(
 
     if load_pretrained_from_path is not None:
         model.load_state_dict(torch.load(load_pretrained_from_path, weights_only=True))
+        logger.info(f"Loaded pretrained model from {load_pretrained_from_path}")
 
     return model
 
@@ -78,7 +79,7 @@ class Gradients:
 
 
 class HookedModel(ABC):
-    def __init__(self):
+    def __init__(self, model_string: str):
         self.hook_handles_activations: List[RemovableHandle] = []
         self.hook_handles_weights: List[RemovableHandle] = []
         self.hook_handles_gradients: List[RemovableHandle] = []
@@ -86,6 +87,8 @@ class HookedModel(ABC):
         self.weights: List[Weights] = []
         self.activations: List[Activations] = []
         self.gradients: List[Gradients] = []
+
+        self.model_string = model_string
 
     @abstractmethod
     def register_hooks_weight(self) -> None:
@@ -175,7 +178,7 @@ class HookedMNISTClassifier(nn.Module, HookedModel):
         hidden_dims: List[int] = [128, 64],
     ) -> None:
         assert len(hidden_dims) > 0  # requires at least one hidden layer
-        HookedModel.__init__(self)
+        HookedModel.__init__(self, model_string='Feedforward')
         nn.Module.__init__(self)
 
         assert not include_bias  # current graph generation does not support bias
@@ -295,6 +298,7 @@ class MaskingGCN(nn.Module):
         """
         super().__init__()
 
+        self.model_string = 'gcn'
         self.output_logits = output_logits
         self.use_relu = use_relu
 
@@ -341,7 +345,7 @@ class HookedResnet(HookedModel, nn.Module):
         num_classes: int = 10,
         unlearning_target_layer_dim: int = 1024,
     ) -> None:
-        HookedModel.__init__(self)
+        HookedModel.__init__(self, model_string='resnet')
         nn.Module.__init__(self)
 
         self.num_classes = num_classes
