@@ -20,7 +20,7 @@ from torchvision.transforms import ToTensor
 
 from data import GCNBatch
 from model import HookedMNISTClassifier, HookedResnet, MaskingGCN
-from utils import get_cifar10_train_loader, get_cifar10_val_loader
+from utils_data import get_cifar10_train_loader, get_cifar10_val_loader
 
 global_config = OmegaConf.load("configs/config.yaml")
 

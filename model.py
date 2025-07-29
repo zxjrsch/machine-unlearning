@@ -1,13 +1,61 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Callable, List, Type, Union
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, List, Optional, Type, Union
 
 import torch
 import torch.nn.functional as F
+from loguru import logger
 from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
 from torch_geometric.nn import GCNConv, MessagePassing
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
+
+
+class SupportedVisionModels(Enum):
+    HookedMNISTClassifier = HookedMNISTClassifier
+    HookedResnet = HookedResnet
+
+
+def model_factory(
+    model_class: Type[nn.Module],
+    load_pretrained_from_path: Optional[Path | str] = None,
+    compile: bool = True,
+    **kwargs: Any,
+) -> nn.Module:
+    model = model_class(**kwargs) if len(kwargs) > 0 else model_class()
+
+    if compile or load_pretrained_from_path is not None:
+        # exiting pretrained models are all compiled
+        model = torch.compile(model)
+        if load_pretrained_from_path is not None and not compile:
+            logger.info(
+                "Loading pretrained model with compile off is not supported, turning compile on and loading pretrained model."
+            )
+
+    if load_pretrained_from_path is not None:
+        model.load_state_dict(torch.load(load_pretrained_from_path, weights_only=True))
+
+    return model
+
+
+def vision_model_loader(
+    model_type: SupportedVisionModels,
+    load_pretrained_from_path: Optional[Path | str] = None,
+    compile: bool = True,
+    **kwargs: Any,
+) -> nn.Module:
+    """Loads model with default setting. To override default arguments, pass in model specific **kwargs"""
+
+    if model_type == SupportedVisionModels.HookedMNISTClassifier:
+        return model_factory(
+            HookedMNISTClassifier, load_pretrained_from_path, compile, **kwargs
+        )
+    elif model_type == SupportedVisionModels.HookedResnet:
+        return model_factory(HookedResnet, load_pretrained_from_path, compile, **kwargs)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
 
 @dataclass

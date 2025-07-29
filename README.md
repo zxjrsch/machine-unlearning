@@ -134,3 +134,7 @@ class Reporter:
 ```bash
 uv run pre-commit run --all-files
 ```
+
+```bash
+ uv run pytest -s
+```

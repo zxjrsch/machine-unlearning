@@ -14,7 +14,7 @@ from torchinfo import summary
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
-from model import Activations, HookedMNISTClassifier, HookedResnet
+from model import Activations, HookedMNISTClassifier
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -100,7 +100,7 @@ class GCNBatch:
 class GraphGenerator(ModelInspector):
     def __init__(
         self,
-        model: HookedMNISTClassifier | HookedResnet,
+        model,
         checkpoint_path: Union[Path, None] = None,
         graph_dataset_dir: Path = Path("./datasets/Graphs"),
         process_save_batch_size: int = 64,
