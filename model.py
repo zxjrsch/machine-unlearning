@@ -14,49 +14,8 @@ from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 
 
 class SupportedVisionModels(Enum):
-    HookedMNISTClassifier = HookedMNISTClassifier
-    HookedResnet = HookedResnet
-
-
-def model_factory(
-    model_class: Type[nn.Module],
-    load_pretrained_from_path: Optional[Path | str] = None,
-    compile: bool = True,
-    **kwargs: Any,
-) -> nn.Module:
-    model = model_class(**kwargs) if len(kwargs) > 0 else model_class()
-
-    if compile or load_pretrained_from_path is not None:
-        # exiting pretrained models are all compiled
-        model = torch.compile(model)
-        if load_pretrained_from_path is not None and not compile:
-            logger.info(
-                "Loading pretrained model with compile off is not supported, turning compile on and loading pretrained model."
-            )
-
-    if load_pretrained_from_path is not None:
-        model.load_state_dict(torch.load(load_pretrained_from_path, weights_only=True))
-        logger.info(f"Loaded pretrained model from {load_pretrained_from_path}")
-
-    return model
-
-
-def vision_model_loader(
-    model_type: SupportedVisionModels,
-    load_pretrained_from_path: Optional[Path | str] = None,
-    compile: bool = True,
-    **kwargs: Any,
-) -> nn.Module:
-    """Loads model with default setting. To override default arguments, pass in model specific **kwargs"""
-
-    if model_type == SupportedVisionModels.HookedMNISTClassifier:
-        return model_factory(
-            HookedMNISTClassifier, load_pretrained_from_path, compile, **kwargs
-        )
-    elif model_type == SupportedVisionModels.HookedResnet:
-        return model_factory(HookedResnet, load_pretrained_from_path, compile, **kwargs)
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
+    HookedMNISTClassifier = "HookedMNISTClassifier"
+    HookedResnet = "HookedResnet"
 
 
 @dataclass
@@ -343,6 +302,7 @@ class HookedResnet(HookedModel, nn.Module):
     def __init__(
         self,
         num_classes: int = 10,
+        num_in_channels: int = 1,
         unlearning_target_layer_dim: int = 1024,
     ) -> None:
         HookedModel.__init__(self, model_string="resnet")
@@ -357,7 +317,12 @@ class HookedResnet(HookedModel, nn.Module):
         self.groups = 1
         self.base_width = 64
         self.conv1 = nn.Conv2d(
-            3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False
+            num_in_channels,
+            self.inplanes,
+            kernel_size=7,
+            stride=2,
+            padding=3,
+            bias=False,
         )
         self.bn1 = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
@@ -471,6 +436,47 @@ class HookedResnet(HookedModel, nn.Module):
         self.hook_handles_gradients.append(h)
 
     # ------------------------------------------------------------
+
+
+def model_factory(
+    model_class: Type[nn.Module],
+    load_pretrained_from_path: Optional[Path | str] = None,
+    compile: bool = True,
+    **kwargs: Any,
+) -> nn.Module:
+    model = model_class(**kwargs) if len(kwargs) > 0 else model_class()
+
+    if compile or load_pretrained_from_path is not None:
+        # exiting pretrained models are all compiled
+        model = torch.compile(model)
+        if load_pretrained_from_path is not None and not compile:
+            logger.info(
+                "Loading pretrained model with compile off is not supported, turning compile on and loading pretrained model."
+            )
+
+    if load_pretrained_from_path is not None:
+        model.load_state_dict(torch.load(load_pretrained_from_path, weights_only=True))
+        logger.info(f"Loaded pretrained model from {load_pretrained_from_path}")
+
+    return model
+
+
+def vision_model_loader(
+    model_type: SupportedVisionModels,
+    load_pretrained_from_path: Optional[Path | str] = None,
+    compile: bool = True,
+    **kwargs: Any,
+) -> nn.Module:
+    """Loads model with default setting. To override default arguments, pass in model specific **kwargs"""
+
+    if model_type == SupportedVisionModels.HookedMNISTClassifier:
+        return model_factory(
+            HookedMNISTClassifier, load_pretrained_from_path, compile, **kwargs
+        )
+    elif model_type == SupportedVisionModels.HookedResnet:
+        return model_factory(HookedResnet, load_pretrained_from_path, compile, **kwargs)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
 
 
 if __name__ == "__main__":

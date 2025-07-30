@@ -54,8 +54,8 @@ class UnlearningDataset(ABC):
 
 def get_unlearning_dataset(
     dataset: SupportedDatasets,
-    forget_class: int,
     batch_size: int,
+    forget_class: int = 0,
     dataset_path: Optional[str | Path] = None,
 ) -> UnlearningDataset:
 

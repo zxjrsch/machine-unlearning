@@ -1,15 +1,15 @@
 import os
 import tempfile
 
+import ray.train.torch
 import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from torchvision.models import resnet18
 from torchvision.datasets import FashionMNIST
-from torchvision.transforms import ToTensor, Normalize, Compose
+from torchvision.models import resnet18
+from torchvision.transforms import Compose, Normalize, ToTensor
 
-import ray.train.torch
 
 def train_func():
     # Model, Loss, Optimizer
@@ -25,7 +25,9 @@ def train_func():
 
     # Data
     transform = Compose([ToTensor(), Normalize((0.28604,), (0.32025,))])
-    train_data = FashionMNIST(root='datasets', train=True, download=True, transform=transform)
+    train_data = FashionMNIST(
+        root="datasets", train=True, download=True, transform=transform
+    )
     train_loader = DataLoader(train_data, batch_size=128, shuffle=True)
     # [2] Prepare dataloader.
     train_loader = ray.train.torch.prepare_data_loader(train_loader)
@@ -48,8 +50,7 @@ def train_func():
         metrics = {"loss": loss.item(), "epoch": epoch}
         with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
             torch.save(
-                model.module.state_dict(),
-                os.path.join(temp_checkpoint_dir, "model.pt")
+                model.module.state_dict(), os.path.join(temp_checkpoint_dir, "model.pt")
             )
             ray.train.report(
                 metrics,
@@ -57,6 +58,7 @@ def train_func():
             )
         if ray.train.get_context().get_world_rank() == 0:
             print(metrics)
+
 
 # [4] Configure scaling and resource requirements.
 scaling_config = ray.train.ScalingConfig(num_workers=2, use_gpu=True)

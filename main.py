@@ -6,13 +6,14 @@ from data import GraphGenerator
 from eval import Eval, EvalConfig
 from model import SupportedVisionModels
 from reporter import Reporter, ReporterConfig
-from trainer import GCNTrainer, GCNTrainerConfig, Trainer, TrainerConfig
+from trainer import (GCNTrainer, GCNTrainerConfig, VisionModelTrainer,
+                     VisionModelTrainerConfig)
 from utils_data import SupportedDatasets
 
 
 def train_mnist_classifier():
-    config = TrainerConfig()
-    trainer = Trainer(config)
+    config = VisionModelTrainerConfig()
+    trainer = VisionModelTrainer(config)
     checkpoint_path = trainer.train()
     return checkpoint_path
 

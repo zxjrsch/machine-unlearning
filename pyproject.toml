@@ -24,6 +24,7 @@ dependencies = [
     "torch-geometric>=2.6.1",
     "torchinfo>=1.8.0",
     "torchvision>=0.22.1",
+    "tqdm>=4.67.1",
     "trackio>=0.2.1",
 ]
 
