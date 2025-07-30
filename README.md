@@ -11,7 +11,8 @@ mimu/
 ├── model.py        # contains GCN and hooked models
 ├── trainer.py      # manages training
 ├── reporter.py     # plotting 
-├── utils.py        # data utils
+├── utils_data.py   # data utils
+├── .env            # huggingface token
 ```
 
 ### Artifacts 
@@ -42,6 +43,34 @@ Save output to file
 nohup bash -c "clear && bash clean.sh && uv run main.py" > output.log 2>&1 &
 ```
 
+### Supported Models and Datasets
+
+```python
+# model.py
+class SupportedVisionModels(Enum):
+    HookedMNISTClassifier = HookedMNISTClassifier
+    HookedResnet = HookedResnet
+```
+
+```python
+# utils_data.py
+class SupportedDatasets(Enum):
+    MNIST = "MNIST"
+    CIFAR10 = "CIFAR10"
+    CIFAR100 = "CIFAR100"
+    SVHN = "SVHN"
+    IMAGENET_SMALL = "IMAGENET_SMALL"
+    PLANT_CLASSIFICATION = "PLANT_CLASSIFICATION"
+    POKEMON_CLASSIFICATION = "POKEMON_CLASSIFICATION"
+```
+
+⚠️ Whereas the first four datasets are loaded from torch, the last three need to be downloaded from huggingface, placed in the appropriate path (see `utils_data.py`) and loaded with `get_unlearning_dataset` from `utils_data.py`.
+
+1. https://huggingface.co/datasets/ILSVRC/imagenet-1k
+2. https://huggingface.co/datasets/jameelkhalidawan/Plant_Detection_Classification
+3. https://huggingface.co/datasets/fcakyon/pokemon-classification
+
+
 ### Metrics 
 
 1. Cross entropy loss of classifier under forget set (measures unlearning)
@@ -51,7 +80,6 @@ nohup bash -c "clear && bash clean.sh && uv run main.py" > output.log 2>&1 &
 5. Score under retain set (measures utility degradation)
 
 Raw metrics are generated as `json` files saved at `eval/Metrics and Plots/metrics/` and visualizations are plotted at `reports/`.
-
 
 
 ### Adding Baselines

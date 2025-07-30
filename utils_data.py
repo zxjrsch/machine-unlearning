@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+from dotenv import load_dotenv
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets
 from torchvision.transforms import Compose, Normalize, ToTensor
@@ -420,3 +421,10 @@ class MIMU_plant(UnlearningDataset):
         assert os.path.exists(
             self.dataset_path
         ), f"Data not found, need to run data scripts to download and unzip this dataset."
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    hf_token = os.getenv("HF_TOKEN")
+    if not hf_token:
+        raise AssertionError("Remember to place HF_TOKEN in .env file")

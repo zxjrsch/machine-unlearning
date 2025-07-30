@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, List, Tuple, Union, Optional, Type
+from typing import Any, Iterator, List, Optional, Tuple, Union
 
 import torch
 from loguru import logger
@@ -11,11 +11,11 @@ from torch.nn.parameter import Parameter
 from torch.utils.data import DataLoader
 from torch_geometric.data import Data
 from torchinfo import summary
-from torchvision.datasets import MNIST
-from torchvision.transforms import ToTensor
 
-from model import Activations, HookedMNISTClassifier, vision_model_loader, SupportedVisionModels, HookedModel
-from utils_data import SupportedDatasets, get_unlearning_dataset, UnlearningDataset
+from model import (Activations, HookedModel, SupportedVisionModels,
+                   vision_model_loader)
+from utils_data import (SupportedDatasets, UnlearningDataset,
+                        get_unlearning_dataset)
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -109,21 +109,18 @@ class GraphGenerator(ModelInspector):
         process_save_batch_size: int = 64,
         forget_class: int = 9,
         device: str = global_config["device"],
-        mask_layer: Union[
-            int, None
-        ] = -2,  
+        mask_layer: Union[int, None] = -2,
         save_redundant_features: bool = True,
     ) -> None:
-        
         """
-           If mask_layer is int, it specifies one layer to mask, however if 
-           mask_layer=None then all layers are selected. None is not generally supported
-           for this unlearning codebase due to the high computation cost of training such GCN.
+        If mask_layer is int, it specifies one layer to mask, however if
+        mask_layer=None then all layers are selected. None is not generally supported
+        for this unlearning codebase due to the high computation cost of training such GCN.
         """
-        
-        model = vision_model_loader(model_type=vision_model_type, 
-                                    load_pretrained_from_path=checkpoint_path
-                )
+
+        model = vision_model_loader(
+            model_type=vision_model_type, load_pretrained_from_path=checkpoint_path
+        )
         super().__init__(model=model)
 
         self.unlearning_dataset: UnlearningDataset = get_unlearning_dataset(
@@ -132,7 +129,10 @@ class GraphGenerator(ModelInspector):
             batch_size=process_save_batch_size,
         )
 
-        graph_dataset_dir = graph_dataset_dir / f"{self.model.model_string}_{self.unlearning_dataset.dataset_name}"
+        graph_dataset_dir = (
+            graph_dataset_dir
+            / f"{self.model.model_string}_{self.unlearning_dataset.dataset_name}"
+        )
 
         graph_dataset_dir.mkdir(exist_ok=True, parents=True)
         self.graph_dataset_dir = graph_dataset_dir
@@ -439,13 +439,13 @@ class GraphGenerator(ModelInspector):
         self.model.capture_mode(is_on=True)
         self.model.eval()
 
-        
         if self.graph_data_cardinaility is None:
             eumerator = list(enumerate(self.data_loader))
         else:
-            logger.info(f'Using graph_data_cardinaility = {self.graph_data_cardinaility}')
-            eumerator = eumerator[:self.graph_data_cardinaility]
-
+            logger.info(
+                f"Using graph_data_cardinaility = {self.graph_data_cardinaility}"
+            )
+            eumerator = eumerator[: self.graph_data_cardinaility]
 
         feature_batch, batch_idx, total_batches = (
             [],

@@ -22,3 +22,5 @@ observability/
 uv.lock
 .pytest_cache/
 *.log
+
+.env

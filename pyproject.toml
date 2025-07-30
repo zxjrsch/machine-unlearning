@@ -8,6 +8,7 @@ dependencies = [
     "autoflake>=2.3.1",
     "black>=25.1.0",
     "datasets>=4.0.0",
+    "dotenv>=0.9.9",
     "huggingface-hub[cli]>=0.34.1",
     "hydra-core>=1.3.2",
     "isort>=6.0.1",
@@ -17,11 +18,13 @@ dependencies = [
     "notebook>=7.4.4",
     "omegaconf>=2.3.0",
     "pytest>=8.4.1",
+    "ray[train]>=2.48.0",
     "scipy>=1.16.1",
     "torch>=2.7.1",
     "torch-geometric>=2.6.1",
     "torchinfo>=1.8.0",
     "torchvision>=0.22.1",
+    "trackio>=0.2.1",
 ]
 
 [dependency-groups]

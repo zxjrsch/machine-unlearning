@@ -4,12 +4,10 @@ from loguru import logger
 
 from data import GraphGenerator
 from eval import Eval, EvalConfig
-from model import HookedMNISTClassifier
+from model import SupportedVisionModels
 from reporter import Reporter, ReporterConfig
 from trainer import GCNTrainer, GCNTrainerConfig, Trainer, TrainerConfig
-
 from utils_data import SupportedDatasets
-from model import SupportedVisionModels
 
 
 def train_mnist_classifier():
@@ -22,8 +20,12 @@ def train_mnist_classifier():
 def generate_graph(checkpoint_path):
     graph_data_cardinaility = 2048
     vision_model_type = SupportedVisionModels.HookedMNISTClassifier
-    unlearning_dataset = SupportedDatasets.MNIST
-    dg = GraphGenerator(vision_model_type=vision_model_type, checkpoint_path=checkpoint_path, graph_data_cardinaility=graph_data_cardinaility)
+    SupportedDatasets.MNIST
+    dg = GraphGenerator(
+        vision_model_type=vision_model_type,
+        checkpoint_path=checkpoint_path,
+        graph_data_cardinaility=graph_data_cardinaility,
+    )
 
     # # If you wish to obtain single training data points in the form of PyG Data
     # data = dg.get_data()
