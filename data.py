@@ -119,7 +119,9 @@ class GraphGenerator(ModelInspector):
         """
 
         model = vision_model_loader(
-            model_type=vision_model_type, load_pretrained_from_path=checkpoint_path
+            model_type=vision_model_type,
+            load_pretrained_from_path=checkpoint_path,
+            dataset=unlearning_dataset,
         )
         super().__init__(model=model)
 
@@ -367,12 +369,13 @@ class GraphGenerator(ModelInspector):
         m, n = [p for p in self.model.parameters() if p.requires_grad][
             self.mask_layer
         ].shape
+
         activation: Activations = activations[self.mask_layer]
         in_activation, out_activation = (
             activation.input_activation[0].squeeze(),
             activation.output_activation[0].squeeze(),
         )
-
+        # logger.info(f'(m,n)=({m}, {n}) | (in, out) activation shape {in_activation.shape[-1]}, {out_activation.shape[-1]}')
         assert in_activation.shape[-1] == n
         assert out_activation.shape[-1] == m
 
@@ -429,7 +432,6 @@ class GraphGenerator(ModelInspector):
 
     def save_forward_backward_features(self) -> None:
         """Saves grads and activations."""
-
         assert (
             self.data_loader
         )  # data loader must be initialized before getting gradient features
@@ -439,9 +441,8 @@ class GraphGenerator(ModelInspector):
         self.model.capture_mode(is_on=True)
         self.model.eval()
 
-        if self.graph_data_cardinaility is None:
-            eumerator = list(enumerate(self.data_loader))
-        else:
+        eumerator = list(enumerate(self.data_loader))
+        if self.graph_data_cardinaility is not None:
             logger.info(
                 f"Using graph_data_cardinaility = {self.graph_data_cardinaility}"
             )
@@ -618,3 +619,19 @@ class GraphGenerator(ModelInspector):
 
             # logger.info(f'Generated graph feature for representatitive {target.detach()}')
         return graph_features
+
+
+if __name__ == "__main__":
+    import glob
+
+    checkpoint_dir = Path("checkpoints/HookedResnet")
+    if checkpoint_dir.exists() and len(list(checkpoint_dir.iterdir())):
+        resnet_files = sorted(glob.glob(str(checkpoint_dir / "*.pt")))
+        generator = GraphGenerator(
+            vision_model_type=SupportedVisionModels.HookedResnet,
+            unlearning_dataset=SupportedDatasets.MNIST,
+            checkpoint_path=resnet_files[0],
+        )
+        generator.save_forward_backward_features()
+    else:
+        raise AssertionError(f"No resnet foundin {checkpoint_dir}")

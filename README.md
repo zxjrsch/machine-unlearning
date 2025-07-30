@@ -52,6 +52,9 @@ class SupportedVisionModels(Enum):
     HookedResnet = HookedResnet
 ```
 
+When adding new models, the last two layers should be feedforward layers without bias. For any exception the graph generator need to be modified,
+see for example `GraphGenerator.flatten_in_out_activation_single_layer()` in `data.py`.
+
 ```python
 # utils_data.py
 class SupportedDatasets(Enum):

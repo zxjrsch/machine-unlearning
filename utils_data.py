@@ -123,7 +123,7 @@ def get_unlearning_dataset(
 class MIMU_mnist(UnlearningDataset):
     def __init__(self, forget_class, batch_size, dataset_path="datasets"):
         super().__init__(
-            dataset_name=SupportedDatasets.MNIST,
+            dataset_name=SupportedDatasets.MNIST.value,
             forget_class=forget_class,
             batch_size=batch_size,
             dataset_path=dataset_path,

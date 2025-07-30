@@ -12,6 +12,8 @@ from torch.utils.hooks import RemovableHandle
 from torch_geometric.nn import GCNConv, MessagePassing
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 
+from utils_data import SupportedDatasets
+
 
 class SupportedVisionModels(Enum):
     HookedMNISTClassifier = "HookedMNISTClassifier"
@@ -302,7 +304,7 @@ class HookedResnet(HookedModel, nn.Module):
     def __init__(
         self,
         num_classes: int = 10,
-        num_in_channels: int = 1,
+        num_in_channels: int = 3,
         unlearning_target_layer_dim: int = 1024,
     ) -> None:
         HookedModel.__init__(self, model_string="resnet")
@@ -333,11 +335,12 @@ class HookedResnet(HookedModel, nn.Module):
         self.layer4 = self._make_layer(BasicBlock, 512, 2, stride=2, dilate=False)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
+        # bias are set to False in order to construct GCN graph appropriately
         self.unlearning_target_feedforward = nn.Linear(
-            512 * BasicBlock.expansion, unlearning_target_layer_dim
+            512 * BasicBlock.expansion, unlearning_target_layer_dim, bias=False
         )
 
-        self.fc = nn.Linear(unlearning_target_layer_dim, num_classes)
+        self.fc = nn.Linear(unlearning_target_layer_dim, num_classes, bias=False)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -422,9 +425,17 @@ class HookedResnet(HookedModel, nn.Module):
         )
         self.hook_handles_weights.append(h)
 
+        h = self.fc.register_forward_hook(self._hook_factory_weight(module_name="fc"))
+        self.hook_handles_weights.append(h)
+
     def register_hooks_activation(self) -> None:
         h = self.unlearning_target_feedforward.register_forward_hook(
             self._hook_factory_activation(module_name="unlearning_target_feedforward")
+        )
+        self.hook_handles_activations.append(h)
+
+        h = self.fc.register_forward_hook(
+            self._hook_factory_activation(module_name="fc")
         )
         self.hook_handles_activations.append(h)
 
@@ -432,6 +443,11 @@ class HookedResnet(HookedModel, nn.Module):
 
         h = self.unlearning_target_feedforward.register_full_backward_hook(
             self._hook_factory_gradient(module_name="unlearning_target_feedforward")
+        )
+        self.hook_handles_gradients.append(h)
+
+        h = self.fc.register_full_backward_hook(
+            self._hook_factory_gradient(module_name="fc")
         )
         self.hook_handles_gradients.append(h)
 
@@ -444,6 +460,8 @@ def model_factory(
     compile: bool = True,
     **kwargs: Any,
 ) -> nn.Module:
+    logger.info("Model factory received keyword arguments: ")
+    logger.info(kwargs)
     model = model_class(**kwargs) if len(kwargs) > 0 else model_class()
 
     if compile or load_pretrained_from_path is not None:
@@ -463,18 +481,32 @@ def model_factory(
 
 def vision_model_loader(
     model_type: SupportedVisionModels,
+    dataset: SupportedDatasets,
     load_pretrained_from_path: Optional[Path | str] = None,
     compile: bool = True,
     **kwargs: Any,
 ) -> nn.Module:
-    """Loads model with default setting. To override default arguments, pass in model specific **kwargs"""
+    """Loads model with default setting. To override default arguments, pass in model specific **kwargs
+    Specify dataset to initalize models with suitable input channels or output classes.
+    """
 
     if model_type == SupportedVisionModels.HookedMNISTClassifier:
         return model_factory(
             HookedMNISTClassifier, load_pretrained_from_path, compile, **kwargs
         )
     elif model_type == SupportedVisionModels.HookedResnet:
-        return model_factory(HookedResnet, load_pretrained_from_path, compile, **kwargs)
+        if dataset == SupportedDatasets.MNIST:
+            return model_factory(
+                HookedResnet,
+                load_pretrained_from_path,
+                compile,
+                num_in_channels=1,
+                **kwargs,
+            )
+        else:
+            return model_factory(
+                HookedResnet, load_pretrained_from_path, compile, **kwargs
+            )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
