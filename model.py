@@ -139,7 +139,7 @@ class HookedMNISTClassifier(nn.Module, HookedModel):
         hidden_dims: List[int] = [128, 64],
     ) -> None:
         assert len(hidden_dims) > 0  # requires at least one hidden layer
-        HookedModel.__init__(self, model_string="Feedforward")
+        HookedModel.__init__(self, model_string=SupportedVisionModels.HookedMNISTClassifier.value)
         nn.Module.__init__(self)
 
         assert not include_bias  # current graph generation does not support bias
@@ -259,7 +259,6 @@ class MaskingGCN(nn.Module):
         """
         super().__init__()
 
-        self.model_string = "gcn"
         self.output_logits = output_logits
         self.use_relu = use_relu
 
@@ -307,7 +306,7 @@ class HookedResnet(HookedModel, nn.Module):
         num_in_channels: int = 3,
         unlearning_target_layer_dim: int = 1024,
     ) -> None:
-        HookedModel.__init__(self, model_string="resnet")
+        HookedModel.__init__(self, model_string=SupportedVisionModels.HookedResnet.value)
         nn.Module.__init__(self)
 
         self.num_classes = num_classes

@@ -131,12 +131,15 @@ class GraphGenerator(ModelInspector):
             batch_size=process_save_batch_size,
         )
 
+        suffix = f'{self.model.model_string}_{self.unlearning_dataset.dataset_name}'
         graph_dataset_dir = (
             graph_dataset_dir
-            / f"{self.model.model_string}_{self.unlearning_dataset.dataset_name}"
+            / f"{suffix}"
         )
 
         graph_dataset_dir.mkdir(exist_ok=True, parents=True)
+        with open(graph_dataset_dir/ f'{suffix}.txt', 'w') as f:
+            f.write(str(suffix))
         self.graph_dataset_dir = graph_dataset_dir
         self.mask_layer = self.validate_layer(mask_layer)
 

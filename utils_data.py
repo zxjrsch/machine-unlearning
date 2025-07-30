@@ -118,6 +118,15 @@ def get_unlearning_dataset(
                 batch_size=batch_size,
                 dataset_path=dataset_path,
             )
+        
+def get_vision_dataset_classes(dataset: SupportedDatasets) -> int:
+    if dataset == SupportedDatasets.MNIST:
+        return 10
+    elif dataset == SupportedDatasets.CIFAR10:
+        return 10
+    else:
+        return AssertionError(f"Dataset {dataset} not supported. Please add in utils_data.py")
+
 
 
 class MIMU_mnist(UnlearningDataset):

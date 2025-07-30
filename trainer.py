@@ -21,8 +21,8 @@ from torchvision.transforms import ToTensor
 
 from data import GCNBatch
 from model import (HookedMNISTClassifier, HookedResnet, MaskingGCN,
-                   SupportedVisionModels, vision_model_loader)
-from utils_data import SupportedDatasets, get_unlearning_dataset
+                   SupportedVisionModels, HookedModel, vision_model_loader)
+from utils_data import SupportedDatasets, get_unlearning_dataset, get_vision_dataset_classes
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -142,7 +142,7 @@ class VisionModelTrainer:
             self.config.checkpoint_dir = Path(self.config.checkpoint_dir)
 
         model_name = self.config.architecture.value
-        main_dir: Path = self.config.checkpoint_dir / model_name
+        main_dir: Path = self.config.checkpoint_dir / f"{model_name}_{dataset_name}"
         main_dir.mkdir(exist_ok=True, parents=True)
 
         dataset_name = self.config.dataset.value
@@ -168,22 +168,8 @@ class Percentage:
         return p / 100
 
 
-@dataclass
-class GCNTrainerConfig:
-    src_checkpoint: Path
-    gcn_checkpoint_path: Path = Path("checkpoints/gcn")
-    lr = 0.01
-    weight_decay = 5e-4
-    steps = global_config.gcn_train_steps
-    mask_layer: Union[None, int] = -2
-    mask_K: Union[int, Percentage] = (
-        2_500  # number of parameters to keep or some Percentage of the model/layer
-    )
-    device = global_config.device
-
-
 class GraphDataLoader:
-    def __init__(self, graph_data_dir: Path = Path("datasets/Graphs")):
+    def __init__(self, graph_data_dir: Path):
         self.graph_data_dir = graph_data_dir
         self.edge_matrix = self.load_edge_matrix()
         self.batch_paths = sorted(
@@ -195,7 +181,8 @@ class GraphDataLoader:
         file_path = self.graph_data_dir / "graph_edge_matrix.pt"
         return torch.load(file_path)
 
-    def load_weight_feature(self) -> Tensor:
+    def _load_weight_feature(self) -> Tensor:
+        """legacy code, to store weights, go to GraphGenerator and set save_redundant_features to True"""
         file_path = self.graph_data_dir / "flattened_model_weights.pt"
         return torch.load(file_path)
 
@@ -215,21 +202,58 @@ class GCNTrainerStatistics(TypedDict):
     loss_term_3: List[float] = []
 
 
+@dataclass
+class GCNTrainerConfig:
+    vision_model_architecture: SupportedVisionModels
+    vision_model_path: Path
+    vision_dataset: SupportedDatasets
+
+    # specify the partial gcn_dataset_dir, default datasets/Graphs
+    # since GCN trainer will assemble the remaining path as <neural net name>_<dataset name>
+    gcn_dataset_dir: Path = Path("datasets/Graphs"),
+
+    device = global_config["device"]
+    mask_layer: Union[None, int] = -2
+    steps = global_config["gcn_train_steps"]
+    lr = 0.01
+    weight_decay = 5e-4
+    mask_K: Union[int, Percentage] = (
+        2_500  
+    )
+    gcn_checkpoint_path: Path = Path("checkpoints/gcn")
+
+
 class GCNTrainer:
     def __init__(self, config: GCNTrainerConfig) -> None:
         self.config = config
-        self.src_model: HookedMNISTClassifier = self.load_src_model()
+
+        self.vision_model: HookedModel = vision_model_loader(
+            model_type=config.vision_model_architecture, 
+            dataset=config.vision_dataset, 
+            load_pretrained_from_path=config.vision_model_path
+        )
+
+        self.gcn = MaskingGCN()
+        self.graph_data_loader = GraphDataLoader(graph_data_dir=self.get_full_graph_data_dir())
+
+
         self.mask_layer = self.validate_layer(config.mask_layer)
         self.weight_vector = self.vectorize_model()
-        self.src_model_layer_dims = self.get_model_signature()
-        self.src_model_layer_shapes = self.src_model.dim_array + [
-            self.src_model.out_dim
-        ]
-        self.src_model_dim = (
+        self.vision_model_dim = (
             self.weight_vector.numel()
         )  # or the number of parameters in the target layer for masking
-        self.gcn = MaskingGCN()
-        self.graph_data_loader = GraphDataLoader()
+        
+        self.vision_model_layer_dims = self.get_model_signature()
+
+
+        if config.vision_model_architecture == SupportedVisionModels.HookedMNISTClassifier:
+            self.vision_model_layer_shapes = self.vision_model.dim_array + [
+                self.vision_model.out_dim
+            ]
+        else:
+            self.vision_model_layer_shapes = None
+
+
         self.device = self.config.device
         self.prior_distribution = self.get_prior_distribution()
 
@@ -237,18 +261,15 @@ class GCNTrainer:
             assert config.mask_K > 0
             self.K: int = config.mask_K
         elif isinstance(config.mask_K, Percentage):
-            self.K: int = math.ceil(config.mask_K.dec_value * self.src_model_dim)
+            self.K: int = math.ceil(config.mask_K.dec_value * self.vision_model_dim)
 
-    def load_src_model(self) -> nn.Module:
-        model: HookedMNISTClassifier = HookedMNISTClassifier()
-        model = torch.compile(model)
-        model.load_state_dict(torch.load(self.config.src_checkpoint, weights_only=True))
-        return model
-
+    def get_full_graph_data_dir(self) -> str:
+        return self.config.gcn_dataset_dir / f"{self.vision_model.model_string}_{self.config.vision_dataset.value}"
+    
     def validate_layer(self, mask_layer) -> Union[None, int]:
         if mask_layer is not None:
             try:
-                [p for p in self.src_model.parameters() if p.requires_grad][mask_layer]
+                [p for p in self.vision_model.parameters() if p.requires_grad][mask_layer]
             except Exception:
                 logger.info(f"Layer {mask_layer} is invalid.")
                 exit()
@@ -256,36 +277,40 @@ class GCNTrainer:
 
     def vectorize_model(self) -> Tensor:
         trainable_layers = [
-            torch.flatten(p) for p in self.src_model.parameters() if p.requires_grad
+            torch.flatten(p) for p in self.vision_model.parameters() if p.requires_grad
         ]
         if self.mask_layer is None:
+            # full model unlearning is not currently supported due to computation burden seen in inital experiments
             return torch.cat(trainable_layers)
         return trainable_layers[self.mask_layer]
 
     def get_model_signature(self) -> List[int]:
-        counts = [p.numel() for p in self.src_model.parameters() if p.requires_grad]
+        counts = [p.numel() for p in self.vision_model.parameters() if p.requires_grad]
         if self.mask_layer is None:
             return counts
         return [counts[self.mask_layer]]
 
     def mask_full_model(self, mask: Tensor) -> nn.Module:
         # assumes HookedMNISTClassifier used so parameters are matrices
+        # full model unlearning is not currently supported due to computation burden seen in inital experiments
+
+        assert self.config.vision_model_architecture == SupportedVisionModels.HookedMNISTClassifier
         mask = mask.to(self.device)
         self.weight_vector = self.weight_vector.to(self.device)
 
         model_vect = torch.mul(mask, self.weight_vector)
 
         i, layers = 0, []
-        for k in range(len(self.src_model_layer_dims)):
-            n, m = self.src_model_layer_shapes[k : k + 2]
-            assert m * n == self.src_model_layer_dims[k]
-            j = i + self.src_model_layer_dims[k]
+        for k in range(len(self.vision_model_layer_dims)):
+            n, m = self.vision_model_layer_shapes[k : k + 2]
+            assert m * n == self.vision_model_layer_dims[k]
+            j = i + self.vision_model_layer_dims[k]
             layer_vect = model_vect[i:j]
             # logger.info(f'{layer_vect.shape}, {m} x {n} = {m*n}')
             layers.append(layer_vect.unflatten(dim=0, sizes=(m, n)))
             i = j
 
-        state_dict = copy.deepcopy(self.src_model.state_dict())
+        state_dict = copy.deepcopy(self.vision_model.state_dict())
         i = 0
         for key in state_dict.keys():
             state_dict[key] = layers[i]
@@ -299,13 +324,13 @@ class GCNTrainer:
         mask = mask.to(self.device)
         self.weight_vector = self.weight_vector.to(self.device)
         layer_vect = torch.mul(mask, self.weight_vector)
-        assert layer_vect.shape[0] == self.src_model_layer_dims[0]
-        m, n = [p for p in self.src_model.parameters() if p.requires_grad][
+        assert layer_vect.shape[0] == self.vision_model_layer_dims[0]
+        m, n = [p for p in self.vision_model.parameters() if p.requires_grad][
             self.mask_layer
         ].shape
         layer_matrix = layer_vect.unflatten(dim=0, sizes=(m, n))
 
-        state_dict = copy.deepcopy(self.src_model.state_dict())
+        state_dict = copy.deepcopy(self.vision_model.state_dict())
         key = list(state_dict.keys())[self.mask_layer]
         state_dict[key] = layer_matrix
 
@@ -387,7 +412,7 @@ class GCNTrainer:
 
                 # 2/3 term of loss
                 idx = torch.arange(
-                    start=0, end=self.src_model_dim, step=1, device=self.device
+                    start=0, end=self.vision_model_dim, step=1, device=self.device
                 )
                 log_probs = self.prior_distribution.log_prob(idx)
                 term2 = torch.dot(mask, log_probs)
@@ -432,9 +457,10 @@ class GCNTrainer:
             plt.title(f"Compare 3 terms in GCN loss.")
             ax.legend()
 
-            save_dir = Path("observability")
+            mid_path = self.get_save_path(return_dir=True)
+            save_dir = Path("observability") / mid_path
             save_dir.mkdir(exist_ok=True, parents=True)
-            save_path = save_dir / "gcn_loss_terms_{self.config.mask_K}.png"
+            save_path = save_dir / f"{mid_path}_gcn_loss_terms_{self.config.mask_K}.png"
             plt.savefig(save_path)
 
         ckpt_path = self.checkpoint()
@@ -444,17 +470,26 @@ class GCNTrainer:
 
     def checkpoint(self) -> Path:
         """Returns checkpoint path."""
-        d: Union[str, Path] = self.config.gcn_checkpoint_path
-        if type(d) is str:
-            d = Path(d)
-        d.mkdir(exist_ok=True, parents=True)
-
-        now = datetime.now().strftime("%Y_%m_%d_%H_%M")
-        file_name = f"gcn_{now}.pt"
-
-        checkpoint_path = d / file_name
+        checkpoint_path = self.get_save_path()
         torch.save(self.gcn.state_dict(), checkpoint_path)
         return checkpoint_path
+    
+    def get_save_path(self, return_dir: bool = False) -> str:
+
+        if type(self.config.gcn_checkpoint_path) is str:
+            self.config.gcn_checkpoint_path = Path(self.config.gcn_checkpoint_path)
+
+        model_name = self.config.vision_model_architecture.value
+        main_dir: Path = self.config.gcn_checkpoint_path / f"{model_name}_{dataset_name}"
+        main_dir.mkdir(exist_ok=True, parents=True)
+
+        dataset_name = self.config.vision_dataset.value
+        datetime_run_id = datetime.now().strftime("%d_%H_%M")
+        
+        if return_dir:
+            return f"{model_name}_{dataset_name}"
+
+        return main_dir / f"{model_name}_{dataset_name}_{datetime_run_id}.pt"
 
 
 def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
