@@ -723,7 +723,7 @@ class UnlearningSFT:
             d = Path(d)
         d.mkdir(exist_ok=True, parents=True)
 
-        now = datetime.now().strftime("%Y_%m_%d_%H_%M")
+        now = datetime.now().strftime("%d_%H_%M")
         file_name = f"sft_{self.config.finetuning_mode.value}_{self.config.forget_digit}_{now}.pt"
 
         checkpoint_path = d / file_name
@@ -735,14 +735,15 @@ class ResnetTrainStatistics:
     def __init__(
         self,
         val_interval_size: int,
-        save_dir: Path = Path("observability/Resnet"),
-        device: str = global_config.device,
+        vision_dataset: SupportedDatasets,
+        save_dir: Path = Path("observability"),
+        device: str = global_config['device'],
     ):
         self.train_loss = []
         self.test_loss = []
         self.test_score = []
         self.gradient_norm = []
-        self.save_dir = save_dir
+        self.save_dir = save_dir / f"{vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}"
         self.device = device
         self.val_interval_size = val_interval_size
 
@@ -789,7 +790,7 @@ class ResnetTrainStatistics:
         plt.grid(True)
         plt.legend()
 
-        save_path = self.save_dir / "train_val_loss.png"
+        save_path = self.save_dir / f"train_val_loss_{datetime.now().strftime("%d_%H_%M")}.png"
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -805,7 +806,7 @@ class ResnetTrainStatistics:
         plt.title("Resnet Gradient Norm")
         plt.grid(True)
 
-        save_path = self.save_dir / "grad_norm.png"
+        save_path = self.save_dir / f"grad_norm_{datetime.now().strftime("%d_%H_%M")}.png"
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -820,7 +821,7 @@ class ResnetTrainStatistics:
         plt.title("Resnet Validation Score")
         plt.grid(True)
 
-        save_path = self.save_dir / "test_score.png"
+        save_path = self.save_dir / f"test_score_{datetime.now().strftime("%d_%H_%M")}.png"
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -834,38 +835,41 @@ class ResnetTrainStatistics:
 
 @dataclass
 class ResnetTrainerConfig:
-    batch_size = 32
-    lr = 1e-3
-    epochs = 1
-    logging_steps = 100
-    device = global_config.device
-    checkpoint_dir = Path("checkpoints/resnet")
-    model_name: str = "resnet"
+    vision_dataset: SupportedDatasets
+    batch_size: int = 32
+    lr: float = 1e-3
+    epochs: int = 1
+    step_limit: Optional[int] = 1 #for debugging 
+    logging_steps: int = 100
+    device: str = global_config['device']
+    checkpoint_dir: Path = Path("checkpoints/")
 
 
 class ResnetTrainer:
     def __init__(self, config: ResnetTrainerConfig):
         self.config = config
         self.train_statistics = ResnetTrainStatistics(
-            val_interval_size=self.config.logging_steps
+            val_interval_size=self.config.logging_steps,
+            vision_dataset=config.vision_dataset
         )
-        self.model = self.get_model()
+        self.model = vision_model_loader(model_type=SupportedVisionModels.HookedResnet, dataset=config.vision_dataset)
+        self.dataset = get_unlearning_dataset(dataset=config.vision_dataset, batch_size=config.batch_size)
 
-    def get_model(self) -> nn.Module:
-        model = HookedResnet(num_classes=10, unlearning_target_layer_dim=1024)
-        return torch.compile(model)
+    def train(self):
+        
+        try:
+            torch.set_float32_matmul_precision("high")
+        except:
+            logger.info('torch float32_matmul_precision not supported')
 
-    def train(self, step_limit=1):
-
-        torch.set_float32_matmul_precision("high")
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
         criterion = nn.CrossEntropyLoss()
-        train_loader = get_cifar10_train_loader(batch_size=self.config.batch_size)
+        train_loader = self.dataset.get_train_loader()
         self.model.train()
         self.model = self.model.to(self.config.device)
 
-        if step_limit is not None:
-            enumerator = list(enumerate(train_loader))[:step_limit]
+        if self.config.step_limit is not None:
+            enumerator = list(enumerate(train_loader))[:self.config.step_limit]
         else:
             enumerator = enumerate(train_loader)
 
@@ -887,7 +891,7 @@ class ResnetTrainer:
 
                 if step % self.config.logging_steps == 0:
                     logger.info(
-                        f"Epoch {e} | Step {step} | ResNet train loss {train_loss.item()} | Grad norm {grad_norm}"
+                        f"Epoch {e} | Step {step} | ResNet on {self.config.vision_dataset.value} train loss {train_loss.item()} | Grad norm {grad_norm}"
                     )
                     self.train_statistics.plot()
                     self.val()
@@ -901,16 +905,16 @@ class ResnetTrainer:
     def val(self) -> None:
         criterion = nn.CrossEntropyLoss()
 
-        self.model = self.model.to(global_config.device)
+        self.model = self.model.to(self.config.device)
         self.model.eval()
-        val_loader = get_cifar10_val_loader(batch_size=self.config.batch_size)
+        val_loader = self.dataset.get_val_loader()
 
         test_loss, num_batches = 0, len(val_loader)
         score, total = 0, len(val_loader.dataset)
         with torch.no_grad():
             for i, (input, target) in enumerate(val_loader):
-                input = input.to(global_config.device)
-                target = target.to(global_config.device)
+                input = input.to(self.config.device)
+                target = target.to(self.config.device)
 
                 preds: torch.Tensor = self.model(input)
                 test_loss += criterion(preds, target).item()
@@ -924,7 +928,7 @@ class ResnetTrainer:
         self.train_statistics.record_val_score(score)
 
         logger.info(
-            f"Resnet test loss {round(test_loss, 5)} | Score {round(100 * score, 1)} %"
+            f"Resnet test loss on {self.config.vision_dataset.value} {round(test_loss, 5)} | Score {round(100 * score, 1)} %"
         )
 
     def checkpoint(self) -> Path:
@@ -932,10 +936,11 @@ class ResnetTrainer:
         d: Union[str, Path] = self.config.checkpoint_dir
         if type(d) is str:
             d = Path(d)
+        d = d / f'{SupportedVisionModels.HookedResnet.value}_{self.config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}'
         d.mkdir(exist_ok=True, parents=True)
 
-        now = datetime.now().strftime("%Y_%m_%d_%H_%M")
-        file_name = self.config.model_name + "_" + now + ".pt"
+        now = datetime.now().strftime("%d_%H_%M")
+        file_name = f"{SupportedVisionModels.HookedResnet.value}_{self.config.vision_dataset.value}.pt"
 
         checkpoint_path = d / file_name
         torch.save(self.model.state_dict(), checkpoint_path)
