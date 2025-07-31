@@ -23,6 +23,7 @@ from data import GCNBatch
 from model import (HookedMNISTClassifier, HookedResnet, MaskingGCN,
                    SupportedVisionModels, HookedModel, vision_model_loader)
 from utils_data import SupportedDatasets, get_unlearning_dataset, get_vision_dataset_classes
+from tqdm import tqdm
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -141,11 +142,11 @@ class VisionModelTrainer:
         if type(self.config.checkpoint_dir) is str:
             self.config.checkpoint_dir = Path(self.config.checkpoint_dir)
 
+        dataset_name = self.config.dataset.value
         model_name = self.config.architecture.value
         main_dir: Path = self.config.checkpoint_dir / f"{model_name}_{dataset_name}"
         main_dir.mkdir(exist_ok=True, parents=True)
 
-        dataset_name = self.config.dataset.value
         datetime_run_id = datetime.now().strftime("%d_%H_%M")
 
         return main_dir / f"{model_name}_{dataset_name}_{datetime_run_id}.pt"
@@ -210,7 +211,7 @@ class GCNTrainerConfig:
 
     # specify the partial gcn_dataset_dir, default datasets/Graphs
     # since GCN trainer will assemble the remaining path as <neural net name>_<dataset name>
-    gcn_dataset_dir: Path = Path("datasets/Graphs"),
+    gcn_dataset_dir: Path = Path("datasets/Graphs")
 
     device = global_config["device"]
     mask_layer: Union[None, int] = -2
@@ -220,6 +221,7 @@ class GCNTrainerConfig:
     mask_K: Union[int, Percentage] = (
         2_500  
     )
+    logging_steps: int = 2
     gcn_checkpoint_path: Path = Path("checkpoints/gcn")
 
 
@@ -230,8 +232,8 @@ class GCNTrainer:
         self.vision_model: HookedModel = vision_model_loader(
             model_type=config.vision_model_architecture, 
             dataset=config.vision_dataset, 
-            load_pretrained_from_path=config.vision_model_path
-        )
+            load_pretrained_from_path=config.vision_model_path,
+        ).eval()
 
         self.gcn = MaskingGCN()
         self.graph_data_loader = GraphDataLoader(graph_data_dir=self.get_full_graph_data_dir())
@@ -320,7 +322,7 @@ class GCNTrainer:
         model.load_state_dict(state_dict)
         return model
 
-    def mask_single_layer(self, mask: Tensor) -> HookedMNISTClassifier:
+    def mask_single_layer(self, mask: Tensor) -> nn.Module:
         mask = mask.to(self.device)
         self.weight_vector = self.weight_vector.to(self.device)
         layer_vect = torch.mul(mask, self.weight_vector)
@@ -334,14 +336,14 @@ class GCNTrainer:
         key = list(state_dict.keys())[self.mask_layer]
         state_dict[key] = layer_matrix
 
-        model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
+        model: nn.Module = vision_model_loader(model_type=self.config.vision_model_architecture, dataset=self.config.vision_dataset)
         model.load_state_dict(state_dict)
         return model
 
-    def mask_model(self, mask: Tensor) -> HookedMNISTClassifier:
+    def mask_model(self, mask: Tensor) -> nn.Module:
         if self.mask_layer is None:
-            return self.mask_full_model(mask)
-        return self.mask_single_layer(mask)
+            return self.mask_full_model(mask).eval()
+        return self.mask_single_layer(mask).eval()
 
     def get_prior_distribution(self) -> Categorical:
         assert self.weight_vector is not None
@@ -354,7 +356,7 @@ class GCNTrainer:
         return Categorical(probs=probs)
 
     def train(self, plot_stats: bool = True) -> None:
-        adam_optimizer = torch.optim.Adam(
+        adam_optimizer = torch.optim.AdamW(
             self.gcn.parameters(),
             lr=self.config.lr,
             weight_decay=self.config.weight_decay,
@@ -372,7 +374,7 @@ class GCNTrainer:
                 "loss_term_3": [],
             }
 
-        for s in range(self.config.steps):
+        for s in tqdm(range(self.config.steps)):
             gcn_batch, edge_matrix = self.graph_data_loader.next()
 
             feature_batch = gcn_batch.feature_batch.to(self.device)
@@ -388,6 +390,7 @@ class GCNTrainer:
             loss: Tensor = torch.tensor(0.0).to(self.device)
 
             for i in range(batch_size):
+                # logger.info(f'step{i}')
                 x, target = input_batch[i].unsqueeze(0), target_batch[i]
 
                 emperical_Q_logits: Tensor = self.gcn(
@@ -402,12 +405,19 @@ class GCNTrainer:
 
                 masked_model = self.mask_model(mask=mask).to(self.device)
 
-                masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[
-                    target
-                ]
+                try:
+                    masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[
+                        target
+                    ]
+                except Exception:
+                    # logger.info(x.shape)
+                    x = x.unsqueeze(1)
+                    masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[
+                        target
+                    ]
 
                 # 1/3 term of loss
-                term1 = torch.log(masked_model_probability)
+                term1 = torch.log(masked_model_probability.detach().clone())
                 loss -= term1
 
                 # 2/3 term of loss
@@ -438,8 +448,8 @@ class GCNTrainer:
             loss.backward()
             adam_optimizer.step()
             adam_optimizer.zero_grad()
-            if s % 10 == 0:
-                logger.info(f"Step {s} | GCN loss {loss.item()}")
+            if (1+s) % self.config.logging_steps == 0:
+                logger.info(f"Step {s+1} | GCN loss {loss.item()}")
             final_loss = loss.item()
 
         if plot_stats:
@@ -460,7 +470,7 @@ class GCNTrainer:
             mid_path = self.get_save_path(return_dir=True)
             save_dir = Path("observability") / mid_path
             save_dir.mkdir(exist_ok=True, parents=True)
-            save_path = save_dir / f"{mid_path}_gcn_loss_terms_{self.config.mask_K}.png"
+            save_path = save_dir / f"{mid_path}_gcn_loss_terms_top-{self.config.mask_K}.png"
             plt.savefig(save_path)
 
         ckpt_path = self.checkpoint()
@@ -479,11 +489,11 @@ class GCNTrainer:
         if type(self.config.gcn_checkpoint_path) is str:
             self.config.gcn_checkpoint_path = Path(self.config.gcn_checkpoint_path)
 
+        dataset_name = self.config.vision_dataset.value
         model_name = self.config.vision_model_architecture.value
         main_dir: Path = self.config.gcn_checkpoint_path / f"{model_name}_{dataset_name}"
         main_dir.mkdir(exist_ok=True, parents=True)
 
-        dataset_name = self.config.vision_dataset.value
         datetime_run_id = datetime.now().strftime("%d_%H_%M")
         
         if return_dir:
@@ -863,6 +873,12 @@ class ResnetTrainer:
 
 
 if __name__ == "__main__":
-    config = VisionModelTrainerConfig()
-    trainer = VisionModelTrainer(config)
+    # config = VisionModelTrainerConfig()
+    # trainer = VisionModelTrainer(config)
+    # trainer.train()
+    
+    config = GCNTrainerConfig(vision_model_architecture=SupportedVisionModels.HookedResnet,
+                              vision_model_path=sorted(glob.glob('/home/claire/mimu/checkpoints/HookedResnet_MNIST/*.pt'))[0],
+                              vision_dataset=SupportedDatasets.MNIST)
+    trainer = GCNTrainer(config)
     trainer.train()

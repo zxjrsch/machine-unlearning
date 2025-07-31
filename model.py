@@ -304,7 +304,7 @@ class HookedResnet(HookedModel, nn.Module):
         self,
         num_classes: int = 10,
         num_in_channels: int = 3,
-        unlearning_target_layer_dim: int = 1024,
+        unlearning_target_layer_dim: int = 128,
     ) -> None:
         HookedModel.__init__(self, model_string=SupportedVisionModels.HookedResnet.value)
         nn.Module.__init__(self)
@@ -457,15 +457,19 @@ def model_factory(
     model_class: Type[nn.Module],
     load_pretrained_from_path: Optional[Path | str] = None,
     compile: bool = True,
+    eval_mode: bool = False,
     **kwargs: Any,
 ) -> nn.Module:
-    logger.info("Model factory received keyword arguments: ")
-    logger.info(kwargs)
+    # logger.info("Model factory received keyword arguments: ")
+    # logger.info(kwargs)
     model = model_class(**kwargs) if len(kwargs) > 0 else model_class()
 
     if compile or load_pretrained_from_path is not None:
         # exiting pretrained models are all compiled
         model = torch.compile(model)
+        if eval_mode:
+            logger.info('eval mode')
+            model = model.eval()
         if load_pretrained_from_path is not None and not compile:
             logger.info(
                 "Loading pretrained model with compile off is not supported, turning compile on and loading pretrained model."
@@ -483,6 +487,7 @@ def vision_model_loader(
     dataset: SupportedDatasets,
     load_pretrained_from_path: Optional[Path | str] = None,
     compile: bool = True,
+    eval_mode: bool = False,
     **kwargs: Any,
 ) -> nn.Module:
     """Loads model with default setting. To override default arguments, pass in model specific **kwargs
@@ -491,7 +496,7 @@ def vision_model_loader(
 
     if model_type == SupportedVisionModels.HookedMNISTClassifier:
         return model_factory(
-            HookedMNISTClassifier, load_pretrained_from_path, compile, **kwargs
+            HookedMNISTClassifier, load_pretrained_from_path, compile, eval_mode, **kwargs
         )
     elif model_type == SupportedVisionModels.HookedResnet:
         if dataset == SupportedDatasets.MNIST:
@@ -499,12 +504,13 @@ def vision_model_loader(
                 HookedResnet,
                 load_pretrained_from_path,
                 compile,
+                eval_mode,
                 num_in_channels=1,
                 **kwargs,
             )
         else:
             return model_factory(
-                HookedResnet, load_pretrained_from_path, compile, **kwargs
+                HookedResnet, load_pretrained_from_path, compile, eval_mode, **kwargs
             )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")

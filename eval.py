@@ -118,7 +118,7 @@ class Eval:
         desired_data = Subset(dataset, desired_indices)
         return DataLoader(dataset=desired_data, batch_size=self.config.batch_size)
 
-    def compute_representative_masks(self) -> List[Tuple[Tensor, int]]:
+    def compute_representative_masks(self, perform_sampling: bool = False) -> List[Tuple[Tensor, int]]:
         """Gets masks for all the classes."""
         reps = self.mnist_class_representatives()
 
@@ -132,10 +132,17 @@ class Eval:
         mask_label_list = []
         with torch.no_grad():
             for features, cls in node_features:
-                Q_logits = self.gcn(x=features, edge_index=edge_matrix)
-                mask = gumbel_top_k_sampling_v2(
-                    logits=Q_logits, k=self.config.topK, temperature=1, eps=1e-10
-                )
+                Q_logits: Tensor = self.gcn(x=features, edge_index=edge_matrix)
+
+                if perform_sampling:
+                    mask = gumbel_top_k_sampling_v2(
+                        logits=Q_logits, k=self.config.topK, temperature=1, eps=1e-10
+                    )
+                else:
+                    topK_indices = Q_logits.topk(k=self.config.topK).indices
+                    mask = torch.zeros_like(Q_logits, dtype=torch.float)
+                    mask[topK_indices] = 1
+                
                 mask_label_list.append((mask, cls.item()))
 
         return mask_label_list

@@ -627,7 +627,7 @@ class GraphGenerator(ModelInspector):
 if __name__ == "__main__":
     import glob
 
-    checkpoint_dir = Path("checkpoints/HookedResnet")
+    checkpoint_dir = Path("checkpoints/HookedResnet_MNIST")
     if checkpoint_dir.exists() and len(list(checkpoint_dir.iterdir())):
         resnet_files = sorted(glob.glob(str(checkpoint_dir / "*.pt")))
         generator = GraphGenerator(
