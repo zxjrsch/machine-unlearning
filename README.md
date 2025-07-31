@@ -67,12 +67,19 @@ class SupportedDatasets(Enum):
     POKEMON_CLASSIFICATION = "POKEMON_CLASSIFICATION"
 ```
 
-⚠️ Whereas the first four datasets are loaded from torch, the last three need to be downloaded from huggingface, placed in the appropriate path (see `utils_data.py`) and loaded with `get_unlearning_dataset` from `utils_data.py`.
+⚠️ Whereas the first four datasets are loaded from torch (and saved in `./datasets/`), the last three need to be downloaded from huggingface, unzipped and placed in the appropriate path (see `utils_data.py`) and loaded with `get_unlearning_dataset` from `utils_data.py`.
 
-1. https://huggingface.co/datasets/ILSVRC/imagenet-1k
-2. https://huggingface.co/datasets/jameelkhalidawan/Plant_Detection_Classification
-3. https://huggingface.co/datasets/fcakyon/pokemon-classification
 
+| HF Dataset | Default Path | Actions |
+| -----------|--------------|---------|
+| [ImageNet](https://huggingface.co/datasets/ILSVRC/imagenet-1k) | `~/Datasets/ImageNet-small` | download and unzip |
+| [Plant Classification](https://huggingface.co/datasets/jameelkhalidawan/Plant_Detection_Classification) | `~/Datasets/Plant-classification` | N.A. |
+| [Pokemon Classification](https://huggingface.co/datasets/fcakyon/pokemon-classification) | `~/Datasets/Plant-classification` | N.A. |
+
+To unzip ImageNet-small you can run 
+```bash 
+for f in *.tar.gz; do d="${f%.tar.gz}"; mkdir "$d" && tar -xzf "$f" -C "$d"; done
+```
 
 ### Metrics 
 

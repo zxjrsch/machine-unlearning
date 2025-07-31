@@ -6,11 +6,13 @@ from typing import Optional
 
 import torch
 from dotenv import load_dotenv
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, ConcatDataset
 from torchvision import datasets
-from torchvision.transforms import Compose, Normalize, ToTensor
+from torchvision.transforms import Compose, Normalize, ToTensor, Resize
 
 from datasets import load_dataset
+
+from imagenet_classes import IMAGENET2012_CLASSES
 
 
 class SupportedDatasets(Enum):
@@ -392,7 +394,7 @@ class MIMU_imagenet_small(UnlearningDataset):
             dataset_name=SupportedDatasets.IMAGENET_SMALL.value,
             forget_class=forget_class,
             batch_size=batch_size,
-            dataset_path=dataset_path,
+            dataset_path=os.path.expanduser(dataset_path),
         )
 
         assert os.path.exists(
@@ -401,6 +403,9 @@ class MIMU_imagenet_small(UnlearningDataset):
 
 
 class MIMU_pokemon(UnlearningDataset):
+    transform = Compose(
+        [ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    )
     def __init__(
         self,
         forget_class=0,
@@ -412,30 +417,70 @@ class MIMU_pokemon(UnlearningDataset):
             dataset_name=SupportedDatasets.POKEMON_CLASSIFICATION.value,
             forget_class=forget_class,
             batch_size=batch_size,
-            dataset_path=dataset_path,
+            dataset_path=os.path.expanduser(dataset_path),
         )
 
         assert os.path.exists(
             self.dataset_path
         ), f"Data not found, need to run data scripts to download and unzip this dataset."
 
-        self.transform = Compose(
-            [ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
-        )
 
-    def batch_transform(self, x):
-        x["image"] = [self.transform(img.convert("RGB")) for img in x["image"]]
+    @staticmethod
+    def batch_transform(x):
+        x["image"] = [MIMU_pokemon.transform(img.convert("RGB")) for img in x["image"]]
         return x
+    
+    @staticmethod
+    def collate_fn(batch):
+        images = [item['image'] for item in batch]
+        labels = [item['label'] for item in batch]
 
-    def get_loader(self):
+        images = torch.stack(images)
+        labels = torch.tensor(labels)
+        return images, labels
+
+    def get_dataset(self, split: str):
         return (
-            load_dataset(self.dataset_path)
+            load_dataset(self.dataset_path, split=split)
             .with_format("torch")
-            .with_transform(self.batch_transform)
+            .with_transform(MIMU_pokemon.batch_transform)
         )
+    
+    def get_train_loader(self) -> DataLoader:
+        dataset = self.get_dataset(split='train')
+        return DataLoader(dataset=dataset, batch_size=self.batch_size, collate_fn=MIMU_pokemon.collate_fn, shuffle=True)
+
+
+    def get_val_loader(self) -> DataLoader:
+        dataset_1 = self.get_dataset(split='validation')
+        dataset_2 = self.get_dataset(split='test')
+        print(len(dataset_1), len(dataset_2))
+
+        return DataLoader(dataset=ConcatDataset([dataset_1, dataset_2]), batch_size=self.batch_size, collate_fn=MIMU_pokemon.collate_fn, shuffle=True)
+
+
+    def get_single_class(self, class_id: int) -> DataLoader:
+        dataset = self.get_dataset(split='train').filter(lambda x: x['label'] == class_id)
+        print(f'class id: {len(dataset)} | {class_id}')
+        return DataLoader(
+            dataset, 
+            batch_size=self.batch_size, 
+            collate_fn=MIMU_pokemon.collate_fn,
+            shuffle=True
+        )
+
+    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+        raise NotImplementedError()
+
+    def get_forget_set(self, is_train: bool = False) -> DataLoader:
+        return self.get_single_class(class_id=self.forget_class, is_train=is_train)
+
 
 
 class MIMU_plant(UnlearningDataset):
+    transform = Compose(
+        [Resize((256, 256)), ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    )
     def __init__(
         self,
         forget_class=0,
@@ -447,16 +492,82 @@ class MIMU_plant(UnlearningDataset):
             dataset_name=SupportedDatasets.PLANT_CLASSIFICATION.value,
             forget_class=forget_class,
             batch_size=batch_size,
-            dataset_path=dataset_path,
+            dataset_path=os.path.expanduser(dataset_path),
         )
 
         assert os.path.exists(
             self.dataset_path
         ), f"Data not found, need to run data scripts to download and unzip this dataset."
 
+    @staticmethod
+    def batch_transform(x):
+        x["image"] = [MIMU_plant.transform(img.convert("RGB")) for img in x["image"]]
+        return x
+    
+    @staticmethod
+    def collate_fn(batch):
+        images = [item['image'] for item in batch]
+        labels = [item['label'] for item in batch]
+
+        images = torch.stack(images)
+        labels = torch.tensor(labels)
+        return images, labels
+
+    def get_dataset(self, is_train: bool= True):
+        if is_train:
+            return (
+            load_dataset(self.dataset_path + '/train', split='train')
+            .with_format("torch")
+            .with_transform(MIMU_plant.batch_transform)
+            ) 
+        else:
+
+            return (
+            load_dataset(self.dataset_path + '/test', split='train')
+            .with_format("torch")
+            .with_transform(MIMU_plant.batch_transform)
+            ) 
+        
+    def get_train_loader(self) -> DataLoader:
+        dataset = self.get_dataset(is_train=True)
+        return DataLoader(dataset=dataset, batch_size=self.batch_size, collate_fn=MIMU_plant.collate_fn, shuffle=True)
+
+
+    def get_val_loader(self) -> DataLoader:
+        dataset = self.get_dataset(is_train=False)
+
+        return DataLoader(dataset=dataset, batch_size=self.batch_size, collate_fn=MIMU_plant.collate_fn, shuffle=True)
+
+
+    def get_single_class(self, class_id: int) -> DataLoader:
+        dataset = self.get_dataset(is_train=True).filter(lambda x: x['label'] == class_id)
+        print(f'class id: {len(dataset)} | {class_id}')
+        return DataLoader(
+            dataset, 
+            batch_size=self.batch_size, 
+            collate_fn=MIMU_plant.collate_fn,
+            shuffle=True
+        )
+
+    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+        raise NotImplementedError()
+
+    def get_forget_set(self, is_train: bool = False) -> DataLoader:
+        return self.get_single_class(class_id=self.forget_class, is_train=is_train)
+
+
 
 if __name__ == "__main__":
-    load_dotenv()
-    hf_token = os.getenv("HF_TOKEN")
-    if not hf_token:
-        raise AssertionError("Remember to place HF_TOKEN in .env file")
+    # load_dotenv()
+    # hf_token = os.getenv("HF_TOKEN")
+    # if not hf_token:
+    #     raise AssertionError("Remember to place HF_TOKEN in .env file")
+    import code
+
+    plants = MIMU_plant()
+    ds = plants.get_val_loader()
+    b = next(iter(ds))
+
+    ds = plants.get_single_class(0)
+
+    code.interact(local=locals())
