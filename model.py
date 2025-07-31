@@ -139,7 +139,9 @@ class HookedMNISTClassifier(nn.Module, HookedModel):
         hidden_dims: List[int] = [128, 64],
     ) -> None:
         assert len(hidden_dims) > 0  # requires at least one hidden layer
-        HookedModel.__init__(self, model_string=SupportedVisionModels.HookedMNISTClassifier.value)
+        HookedModel.__init__(
+            self, model_string=SupportedVisionModels.HookedMNISTClassifier.value
+        )
         nn.Module.__init__(self)
 
         assert not include_bias  # current graph generation does not support bias
@@ -306,7 +308,9 @@ class HookedResnet(HookedModel, nn.Module):
         num_in_channels: int = 3,
         unlearning_target_layer_dim: int = 128,
     ) -> None:
-        HookedModel.__init__(self, model_string=SupportedVisionModels.HookedResnet.value)
+        HookedModel.__init__(
+            self, model_string=SupportedVisionModels.HookedResnet.value
+        )
         nn.Module.__init__(self)
 
         self.num_classes = num_classes
@@ -468,7 +472,7 @@ def model_factory(
         # exiting pretrained models are all compiled
         model = torch.compile(model)
         if eval_mode:
-            logger.info('eval mode')
+            logger.info("eval mode")
             model = model.eval()
         if load_pretrained_from_path is not None and not compile:
             logger.info(
@@ -496,7 +500,11 @@ def vision_model_loader(
 
     if model_type == SupportedVisionModels.HookedMNISTClassifier:
         return model_factory(
-            HookedMNISTClassifier, load_pretrained_from_path, compile, eval_mode, **kwargs
+            HookedMNISTClassifier,
+            load_pretrained_from_path,
+            compile,
+            eval_mode,
+            **kwargs,
         )
     elif model_type == SupportedVisionModels.HookedResnet:
         if dataset == SupportedDatasets.MNIST:

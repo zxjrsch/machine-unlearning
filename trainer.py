@@ -18,12 +18,12 @@ from torch.distributions import Categorical
 from torch.utils.data import DataLoader, Subset
 from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
+from tqdm import tqdm
 
 from data import GCNBatch
-from model import (HookedMNISTClassifier, HookedResnet, MaskingGCN,
-                   SupportedVisionModels, HookedModel, vision_model_loader)
-from utils_data import SupportedDatasets, get_unlearning_dataset, get_vision_dataset_classes
-from tqdm import tqdm
+from model import (HookedMNISTClassifier, HookedModel, HookedResnet,
+                   MaskingGCN, SupportedVisionModels, vision_model_loader)
+from utils_data import SupportedDatasets, get_unlearning_dataset
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -218,9 +218,7 @@ class GCNTrainerConfig:
     steps = global_config["gcn_train_steps"]
     lr = 0.01
     weight_decay = 5e-4
-    mask_K: Union[int, Percentage] = (
-        2_500  
-    )
+    mask_K: Union[int, Percentage] = 2_500
     logging_steps: int = 2
     gcn_checkpoint_path: Path = Path("checkpoints/gcn")
 
@@ -230,31 +228,33 @@ class GCNTrainer:
         self.config = config
 
         self.vision_model: HookedModel = vision_model_loader(
-            model_type=config.vision_model_architecture, 
-            dataset=config.vision_dataset, 
+            model_type=config.vision_model_architecture,
+            dataset=config.vision_dataset,
             load_pretrained_from_path=config.vision_model_path,
         ).eval()
 
         self.gcn = MaskingGCN()
-        self.graph_data_loader = GraphDataLoader(graph_data_dir=self.get_full_graph_data_dir())
-
+        self.graph_data_loader = GraphDataLoader(
+            graph_data_dir=self.get_full_graph_data_dir()
+        )
 
         self.mask_layer = self.validate_layer(config.mask_layer)
         self.weight_vector = self.vectorize_model()
         self.vision_model_dim = (
             self.weight_vector.numel()
         )  # or the number of parameters in the target layer for masking
-        
+
         self.vision_model_layer_dims = self.get_model_signature()
 
-
-        if config.vision_model_architecture == SupportedVisionModels.HookedMNISTClassifier:
+        if (
+            config.vision_model_architecture
+            == SupportedVisionModels.HookedMNISTClassifier
+        ):
             self.vision_model_layer_shapes = self.vision_model.dim_array + [
                 self.vision_model.out_dim
             ]
         else:
             self.vision_model_layer_shapes = None
-
 
         self.device = self.config.device
         self.prior_distribution = self.get_prior_distribution()
@@ -266,12 +266,17 @@ class GCNTrainer:
             self.K: int = math.ceil(config.mask_K.dec_value * self.vision_model_dim)
 
     def get_full_graph_data_dir(self) -> str:
-        return self.config.gcn_dataset_dir / f"{self.vision_model.model_string}_{self.config.vision_dataset.value}"
-    
+        return (
+            self.config.gcn_dataset_dir
+            / f"{self.vision_model.model_string}_{self.config.vision_dataset.value}"
+        )
+
     def validate_layer(self, mask_layer) -> Union[None, int]:
         if mask_layer is not None:
             try:
-                [p for p in self.vision_model.parameters() if p.requires_grad][mask_layer]
+                [p for p in self.vision_model.parameters() if p.requires_grad][
+                    mask_layer
+                ]
             except Exception:
                 logger.info(f"Layer {mask_layer} is invalid.")
                 exit()
@@ -296,7 +301,10 @@ class GCNTrainer:
         # assumes HookedMNISTClassifier used so parameters are matrices
         # full model unlearning is not currently supported due to computation burden seen in inital experiments
 
-        assert self.config.vision_model_architecture == SupportedVisionModels.HookedMNISTClassifier
+        assert (
+            self.config.vision_model_architecture
+            == SupportedVisionModels.HookedMNISTClassifier
+        )
         mask = mask.to(self.device)
         self.weight_vector = self.weight_vector.to(self.device)
 
@@ -336,7 +344,10 @@ class GCNTrainer:
         key = list(state_dict.keys())[self.mask_layer]
         state_dict[key] = layer_matrix
 
-        model: nn.Module = vision_model_loader(model_type=self.config.vision_model_architecture, dataset=self.config.vision_dataset)
+        model: nn.Module = vision_model_loader(
+            model_type=self.config.vision_model_architecture,
+            dataset=self.config.vision_dataset,
+        )
         model.load_state_dict(state_dict)
         return model
 
@@ -406,15 +417,15 @@ class GCNTrainer:
                 masked_model = self.mask_model(mask=mask).to(self.device)
 
                 try:
-                    masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[
-                        target
-                    ]
+                    masked_model_probability = F.softmax(
+                        masked_model(x), dim=-1
+                    ).squeeze()[target]
                 except Exception:
                     # logger.info(x.shape)
                     x = x.unsqueeze(1)
-                    masked_model_probability = F.softmax(masked_model(x), dim=-1).squeeze()[
-                        target
-                    ]
+                    masked_model_probability = F.softmax(
+                        masked_model(x), dim=-1
+                    ).squeeze()[target]
 
                 # 1/3 term of loss
                 term1 = torch.log(masked_model_probability.detach().clone())
@@ -448,7 +459,7 @@ class GCNTrainer:
             loss.backward()
             adam_optimizer.step()
             adam_optimizer.zero_grad()
-            if (1+s) % self.config.logging_steps == 0:
+            if (1 + s) % self.config.logging_steps == 0:
                 logger.info(f"Step {s+1} | GCN loss {loss.item()}")
             final_loss = loss.item()
 
@@ -470,7 +481,9 @@ class GCNTrainer:
             mid_path = self.get_save_path(return_dir=True)
             save_dir = Path("observability") / mid_path
             save_dir.mkdir(exist_ok=True, parents=True)
-            save_path = save_dir / f"{mid_path}_gcn_loss_terms_top-{self.config.mask_K}.png"
+            save_path = (
+                save_dir / f"{mid_path}_gcn_loss_terms_top-{self.config.mask_K}.png"
+            )
             plt.savefig(save_path)
 
         ckpt_path = self.checkpoint()
@@ -483,7 +496,7 @@ class GCNTrainer:
         checkpoint_path = self.get_save_path()
         torch.save(self.gcn.state_dict(), checkpoint_path)
         return checkpoint_path
-    
+
     def get_save_path(self, return_dir: bool = False) -> str:
 
         if type(self.config.gcn_checkpoint_path) is str:
@@ -491,11 +504,13 @@ class GCNTrainer:
 
         dataset_name = self.config.vision_dataset.value
         model_name = self.config.vision_model_architecture.value
-        main_dir: Path = self.config.gcn_checkpoint_path / f"{model_name}_{dataset_name}"
+        main_dir: Path = (
+            self.config.gcn_checkpoint_path / f"{model_name}_{dataset_name}"
+        )
         main_dir.mkdir(exist_ok=True, parents=True)
 
         datetime_run_id = datetime.now().strftime("%d_%H_%M")
-        
+
         if return_dir:
             return f"{model_name}_{dataset_name}"
 
@@ -876,9 +891,13 @@ if __name__ == "__main__":
     # config = VisionModelTrainerConfig()
     # trainer = VisionModelTrainer(config)
     # trainer.train()
-    
-    config = GCNTrainerConfig(vision_model_architecture=SupportedVisionModels.HookedResnet,
-                              vision_model_path=sorted(glob.glob('/home/claire/mimu/checkpoints/HookedResnet_MNIST/*.pt'))[0],
-                              vision_dataset=SupportedDatasets.MNIST)
+
+    config = GCNTrainerConfig(
+        vision_model_architecture=SupportedVisionModels.HookedResnet,
+        vision_model_path=sorted(
+            glob.glob("/home/claire/mimu/checkpoints/HookedResnet_MNIST/*.pt")
+        )[0],
+        vision_dataset=SupportedDatasets.MNIST,
+    )
     trainer = GCNTrainer(config)
     trainer.train()

@@ -1,6 +1,5 @@
 from collections import OrderedDict
 
-
 IMAGENET2012_CLASSES = OrderedDict(
     {
         "n01440764": "tench, Tinca tinca",
