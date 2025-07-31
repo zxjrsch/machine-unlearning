@@ -5,6 +5,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Tuple, TypedDict, Union
 
@@ -15,15 +16,13 @@ from loguru import logger
 from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.distributions import Categorical
-from torch.utils.data import DataLoader, Subset
-from torchvision.datasets import MNIST
-from torchvision.transforms import ToTensor
 from tqdm import tqdm
 
 from data import GCNBatch
 from model import (HookedMNISTClassifier, HookedModel, HookedResnet,
                    MaskingGCN, SupportedVisionModels, vision_model_loader)
-from utils_data import SupportedDatasets, get_unlearning_dataset
+from utils_data import (SupportedDatasets, get_unlearning_dataset,
+                        get_vision_dataset_classes)
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -556,23 +555,36 @@ def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
     return F.softmax(masked_logits / temperature, dim=-1)
 
 
+class SFTModes(Enum):
+    Randomize_Forget = "Randomize_Forget"
+    Finetune_Retain = "Finetune_Retain"
+    Randomize_Forget_And_Finetune_Retain = "Randomize_Forget_And_Finetune_Retain"
+
+
 @dataclass
 class UnlearningSFTConfig:
-    init_model: Union[HookedMNISTClassifier, None] = (
-        None  # if None, model will load from path
-    )
-    original_model_path: Union[Path, None] = (
-        None  # Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
-    )
-    save_dir: Path = Path("checkpoints/finetuned_mnist_classifier")
-    data_dir: Path = Path("datasets")
+    # dataset
+    vision_dataset: SupportedDatasets
+    forget_digit: int = 9
+    batch_size: int = 4
+
+    # model
+    architecture: SupportedVisionModels
+    init_model: Optional[HookedMNISTClassifier] = None  # pass in argument
+    original_model_path: Optional[Path] = None  # or loaded from path
+
+    # hardware
+    device: str = global_config["device"]
+
+    # training
+    finetuning_mode: SFTModes = SFTModes.Randomize_Forget
     finetune_layer: int = -2
     lr: float = 1e-2
-    device: str = global_config.device
     steps: int = 30
-    batch_size: int = 4
-    logging_steps: int = 16
-    forget_digit: int = 9
+    logging_steps: int = 10
+
+    # saving
+    save_dir: Path = Path("checkpoints/finetuned_models")
 
 
 class UnlearningSFT:
@@ -581,21 +593,33 @@ class UnlearningSFT:
     def __init__(self, config: UnlearningSFTConfig) -> None:
         self.config = config
         self.model = self.load_forzen_model()
+        self.dataset = get_unlearning_dataset(
+            dataset=config.vision_dataset,
+            batch_size=config.batch_size,
+            forget_class=config.forget_digit,
+        )
+        self.num_classes = get_vision_dataset_classes(config.vision_dataset)
         self.sampling_distribution = Categorical(
-            probs=torch.ones(10) / 10
-        )  # 10 mnist classes
+            probs=torch.ones(self.num_classes) / self.num_classes
+        )
 
     def load_forzen_model(self) -> HookedMNISTClassifier:
         """Freezes all layers except finetuning layer."""
 
-        if self.config.init_model is None:
-            model: HookedMNISTClassifier = HookedMNISTClassifier()
-            model = torch.compile(model)
-            model.load_state_dict(
-                torch.load(self.config.original_model_path, weights_only=True)
-            )
-        else:
+        if self.config.init_model is not None:
+            assert (
+                self.config.original_model_path is None
+            ), "Must specify exactly one of UnlearningSFTConfig.init_model or UnlearningSFTConfig.original_model_path"
             model = self.config.init_model
+        else:
+            assert (
+                config.original_model_path is not None
+            ), "Must specify either UnlearningSFTConfig.init_model or UnlearningSFTConfig.original_model_path"
+            model = vision_model_loader(
+                model_type=self.config.architecture,
+                dataset=self.config.vision_dataset,
+                load_pretrained_from_path=self.config.original_model_path,
+            )
 
         # To handle target layer specified as a negative value such as -2
         num_layers = sum([1 for layer in model.parameters() if layer.requires_grad])
@@ -616,15 +640,14 @@ class UnlearningSFT:
         batch_size = self.config.batch_size
         return self.sampling_distribution.sample((batch_size,))
 
-    def finetune(
-        self, save_checkpoint: bool = False
-    ) -> Union[Path, HookedMNISTClassifier]:
+    def finetune_randomize_forget(self) -> nn.Module:
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
         loss_fn = nn.CrossEntropyLoss()
         self.model.train()
         self.model = self.model.to(self.config.device)
 
-        train_data = list(enumerate(self.mnist_forget_set()))[: self.config.steps]
+        forget_set = self.dataset.get_forget_set()
+        train_data = list(enumerate(forget_set)[: self.config.steps])
 
         for step, (input, _) in train_data:
             input: Tensor = input.to(self.config.device)
@@ -645,21 +668,53 @@ class UnlearningSFT:
             f"Finetuning complete | classifier loss wrt randomized target {train_loss.item()}"
         )
 
+        return self.model
+
+    def finetune_retain(self) -> nn.Module:
+        adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
+        loss_fn = nn.CrossEntropyLoss()
+        self.model.train()
+        self.model = self.model.to(self.config.device)
+
+        retain_set = self.dataset.get_retain_set()
+        train_data = list(enumerate(retain_set)[: self.config.steps])
+
+        for step, (inputs, targets) in train_data:
+            inputs: Tensor = inputs.to(self.config.device)
+            targets = targets.to(self.config.device)
+
+            preds = self.model(input)
+            train_loss: Tensor = loss_fn(preds, targets)
+            train_loss.backward()
+            adam_optimizer.step()
+            adam_optimizer.zero_grad()
+
+            if step % self.config.logging_steps == 0:
+                logger.info(
+                    f"Finetuning step {step} | classifier loss {train_loss.item()}"
+                )
+
+        logger.info(
+            f"Finetuning complete | classifier loss on retain targets {train_loss.item()}"
+        )
+        return self.model
+
+    def finetune(self, save_checkpoint: bool = False) -> Union[Path, nn.Module]:
+        if self.config.finetuning_mode == SFTModes.Randomize_Forget:
+            self.model = self.finetune_randomize_forget()
+        elif self.config.finetuning_mode == SFTModes.Finetune_Retain:
+            self.model = self.finetune_retain()
+        elif (
+            self.config.finetuning_mode == SFTModes.Randomize_Forget_And_Finetune_Retain
+        ):
+            self.model = self.finetune_randomize_forget()
+            self.model = self.finetune_retain()
+
         if save_checkpoint:
             path = self.checkpoint()
             logger.info(f"Finetune checkpoint saved at {path}")
 
         return self.model
-
-    def mnist_forget_set(self) -> DataLoader:
-        dataset = MNIST(
-            root=self.config.data_dir, train=False, transform=ToTensor(), download=True
-        )
-        forget_indices = (dataset.targets == self.config.forget_digit).nonzero(
-            as_tuple=True
-        )[0]
-        forget_set = Subset(dataset, forget_indices)
-        return DataLoader(dataset=forget_set, batch_size=self.config.batch_size)
 
     def checkpoint(self) -> Path:
         """Returns checkpoint path."""
@@ -669,7 +724,7 @@ class UnlearningSFT:
         d.mkdir(exist_ok=True, parents=True)
 
         now = datetime.now().strftime("%Y_%m_%d_%H_%M")
-        file_name = f"sft_randomize_class_{self.config.forget_digit}_{now}.pt"
+        file_name = f"sft_{self.config.finetuning_mode.value}_{self.config.forget_digit}_{now}.pt"
 
         checkpoint_path = d / file_name
         torch.save(self.model.state_dict(), checkpoint_path)
