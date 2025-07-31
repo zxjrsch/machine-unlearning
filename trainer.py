@@ -27,13 +27,122 @@ from utils_data import (SupportedDatasets, get_unlearning_dataset,
 global_config = OmegaConf.load("configs/config.yaml")
 
 
+class VisionModelTrainerStatistics:
+    def __init__(
+        self,
+        vision_model_architecture: SupportedVisionModels,
+        vision_dataset: SupportedDatasets,
+        val_interval_size: int,
+        device: str = global_config['device'],
+    ):
+        self.vision_model_architecture = vision_model_architecture
+        self.vision_dataset = vision_dataset
+        self.train_loss = []
+        self.test_loss = []
+        self.test_score = []
+        self.gradient_norm = []
+        self.save_dir = self.get_save_dir()
+        self.device = device
+        self.val_interval_size = val_interval_size
+
+    def get_save_dir(self):
+        dir =  Path("observability") / f"{self.vision_model_architecture.value}_{self.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}"
+        dir.mkdir(parents=True, exist_ok=True)
+        return dir
+
+    def record_train_loss(self, loss: float) -> None:
+        self.train_loss.append(loss)
+
+    def record_grad_norm(self, grad_norm: float) -> None:
+        self.gradient_norm.append(grad_norm)
+
+    def record_val_loss(self, loss):
+        self.test_loss.append(loss)
+
+    def record_val_score(self, score):
+        self.test_score.append(score)
+
+    def get_grad_norm(self, model: nn.Module) -> float:
+
+        sum_of_squares = torch.tensor(0.0, device=self.device)
+        for p in model.parameters():
+            if p.requires_grad and p.grad is not None:
+                sum_of_squares += p.grad.norm(2).pow(2)
+
+        grad_norm = sum_of_squares.sqrt().item()
+        return grad_norm
+
+    def plot_loss(self):
+
+        plt.clf()
+        x = list(range(len(self.train_loss)))
+        plt.plot(x, self.train_loss, label="train loss")
+
+        if len(self.test_loss) > 0:
+            z = [self.val_interval_size]
+            for _ in self.test_loss[1:]:
+                z.append(z[-1] + self.val_interval_size)
+            plt.plot(z, self.test_loss, label="test loss")
+
+        plt.xlabel("step")
+        plt.ylabel("loss")
+        plt.title("Resnet Loss")
+
+        plt.grid(True)
+        plt.legend()
+
+        save_path = self.save_dir / f"train_val_loss_{datetime.now().strftime("%d_%H_%M")}.png"
+        plt.savefig(
+            save_path, dpi=1000
+        )  # You can change the filename and dpi as needed
+        plt.clf()
+
+    def plot_grad_norm(self):
+
+        plt.clf()
+        x = list(range(len(self.gradient_norm)))
+        plt.plot(x, self.gradient_norm)
+        plt.xlabel("train step")
+        plt.ylabel("grad norm")
+        plt.title("Resnet Gradient Norm")
+        plt.grid(True)
+
+        save_path = self.save_dir / f"grad_norm_{datetime.now().strftime("%d_%H_%M")}.png"
+        plt.savefig(
+            save_path, dpi=1000
+        )  # You can change the filename and dpi as needed
+        plt.clf()
+
+    def plot_test_score(self):
+        plt.clf()
+        x = list(range(len(self.test_score)))
+        plt.plot(x, self.test_score)
+        plt.xlabel("test step")
+        plt.ylabel("test score")
+        plt.title("Resnet Validation Score")
+        plt.grid(True)
+
+        save_path = self.save_dir / f"test_score_{datetime.now().strftime("%d_%H_%M")}.png"
+        plt.savefig(
+            save_path, dpi=1000
+        )  # You can change the filename and dpi as needed
+        plt.clf()
+
+    def plot(self):
+        self.plot_loss()
+        self.plot_grad_norm()
+        self.plot_test_score()
+
+
+
 @dataclass
 class VisionModelTrainerConfig:
     architecture: SupportedVisionModels = SupportedVisionModels.HookedResnet
-    dataset: SupportedDatasets = SupportedDatasets.MNIST
+    vision_dataset: SupportedDatasets = SupportedDatasets.MNIST
 
     checkpoint_dir: Path | str = Path("checkpoints")
     logging_steps: int = 50
+    plot_statistics: bool = True
 
     batch_size: int = 256
     epochs: int = 1
@@ -49,11 +158,21 @@ class VisionModelTrainer:
             model_type=config.architecture, dataset=config.dataset
         )
         self.validation_dataloader = get_unlearning_dataset(
-            dataset=config.dataset, batch_size=config.batch_size
+            dataset=config.vision_dataset, batch_size=config.batch_size
         ).get_val_loader()
+        if config.plot_statistics:
+            self.statistics = VisionModelTrainerStatistics(vision_model_architecture=config.architecture,
+                                                        vision_dataset=config.vision_dataset, 
+                                                        val_interval_size=config.logging_steps, 
+                                                        device=config.device)
 
     def train(self) -> Path:
         """Returns checkpoint path."""
+
+        try:
+            torch.set_float32_matmul_precision("high")
+        except:
+            logger.info('torch float32_matmul_precision not supported')
 
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
         criterion = nn.CrossEntropyLoss()
@@ -87,6 +206,12 @@ class VisionModelTrainer:
 
                 train_loss.backward()
                 adam_optimizer.step()
+
+                if self.config.plot_statistics:
+                    grad_norm: float = self.statistics.get_grad_norm(self.model)
+                    self.statistics.record_grad_norm(grad_norm)
+                    self.statistics.record_train_loss(train_loss.item())
+
                 adam_optimizer.zero_grad()
 
                 throughput.append(self.config.batch_size / (time.perf_counter() - t))
@@ -98,6 +223,7 @@ class VisionModelTrainer:
                     )
                     throughput = []
                     self.val()
+                    self.statistics.plot()
                     self.model.train()
 
         checkpoint_path: Path = self.checkpoint()
@@ -131,6 +257,10 @@ class VisionModelTrainer:
 
         test_loss /= num_batches
         accuracy /= data_size
+
+        if self.config.plot_statistics:
+            self.statistics.record_val_loss(test_loss)
+            self.statistics.record_val_score(accuracy)
 
         logger.info(
             f"Test loss {round(test_loss, 5)} | Score {round(100 * accuracy, 1)} %"
@@ -562,7 +692,7 @@ class SFTModes(Enum):
 
 
 @dataclass
-class UnlearningSFTConfig:
+class SFTConfig:
     # dataset
     vision_dataset: SupportedDatasets
     forget_digit: int = 9
@@ -587,10 +717,10 @@ class UnlearningSFTConfig:
     save_dir: Path = Path("checkpoints/finetuned_models")
 
 
-class UnlearningSFT:
+class SFTConfig:
     """"""
 
-    def __init__(self, config: UnlearningSFTConfig) -> None:
+    def __init__(self, config: SFTConfig) -> None:
         self.config = config
         self.model = self.load_forzen_model()
         self.dataset = get_unlearning_dataset(
@@ -613,7 +743,7 @@ class UnlearningSFT:
             model = self.config.init_model
         else:
             assert (
-                config.original_model_path is not None
+                self.config.original_model_path is not None
             ), "Must specify either UnlearningSFTConfig.init_model or UnlearningSFTConfig.original_model_path"
             model = vision_model_loader(
                 model_type=self.config.architecture,
@@ -729,235 +859,3 @@ class UnlearningSFT:
         checkpoint_path = d / file_name
         torch.save(self.model.state_dict(), checkpoint_path)
         return checkpoint_path
-
-
-class ResnetTrainStatistics:
-    def __init__(
-        self,
-        val_interval_size: int,
-        vision_dataset: SupportedDatasets,
-        save_dir: Path = Path("observability"),
-        device: str = global_config['device'],
-    ):
-        self.train_loss = []
-        self.test_loss = []
-        self.test_score = []
-        self.gradient_norm = []
-        self.save_dir = save_dir / f"{vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}"
-        self.device = device
-        self.val_interval_size = val_interval_size
-
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-    def record_train_loss(self, loss: float) -> None:
-        self.train_loss.append(loss)
-
-    def record_grad_norm(self, grad_norm: float) -> None:
-        self.gradient_norm.append(grad_norm)
-
-    def record_val_loss(self, loss):
-        self.test_loss.append(loss)
-
-    def record_val_score(self, score):
-        self.test_score.append(score)
-
-    def get_grad_norm(self, model: nn.Module) -> float:
-
-        sum_of_squares = torch.tensor(0.0, device=self.device)
-        for p in model.parameters():
-            if p.requires_grad and p.grad is not None:
-                sum_of_squares += p.grad.norm(2).pow(2)
-
-        grad_norm = sum_of_squares.sqrt().item()
-        return grad_norm
-
-    def plot_loss(self):
-
-        plt.clf()
-        x = list(range(len(self.train_loss)))
-        plt.plot(x, self.train_loss, label="train loss")
-
-        if len(self.test_loss) > 0:
-            z = [self.val_interval_size]
-            for _ in self.test_loss[1:]:
-                z.append(z[-1] + self.val_interval_size)
-            plt.plot(z, self.test_loss, label="test loss")
-
-        plt.xlabel("step")
-        plt.ylabel("loss")
-        plt.title("Resnet Loss")
-
-        plt.grid(True)
-        plt.legend()
-
-        save_path = self.save_dir / f"train_val_loss_{datetime.now().strftime("%d_%H_%M")}.png"
-        plt.savefig(
-            save_path, dpi=1000
-        )  # You can change the filename and dpi as needed
-        plt.clf()
-
-    def plot_grad_norm(self):
-
-        plt.clf()
-        x = list(range(len(self.gradient_norm)))
-        plt.plot(x, self.gradient_norm)
-        plt.xlabel("train step")
-        plt.ylabel("grad norm")
-        plt.title("Resnet Gradient Norm")
-        plt.grid(True)
-
-        save_path = self.save_dir / f"grad_norm_{datetime.now().strftime("%d_%H_%M")}.png"
-        plt.savefig(
-            save_path, dpi=1000
-        )  # You can change the filename and dpi as needed
-        plt.clf()
-
-    def plot_test_score(self):
-        plt.clf()
-        x = list(range(len(self.test_score)))
-        plt.plot(x, self.test_score)
-        plt.xlabel("test step")
-        plt.ylabel("test score")
-        plt.title("Resnet Validation Score")
-        plt.grid(True)
-
-        save_path = self.save_dir / f"test_score_{datetime.now().strftime("%d_%H_%M")}.png"
-        plt.savefig(
-            save_path, dpi=1000
-        )  # You can change the filename and dpi as needed
-        plt.clf()
-
-    def plot(self):
-        self.plot_loss()
-        self.plot_grad_norm()
-        self.plot_test_score()
-
-
-@dataclass
-class ResnetTrainerConfig:
-    vision_dataset: SupportedDatasets
-    batch_size: int = 32
-    lr: float = 1e-3
-    epochs: int = 1
-    step_limit: Optional[int] = 1 #for debugging 
-    logging_steps: int = 100
-    device: str = global_config['device']
-    checkpoint_dir: Path = Path("checkpoints/")
-
-
-class ResnetTrainer:
-    def __init__(self, config: ResnetTrainerConfig):
-        self.config = config
-        self.train_statistics = ResnetTrainStatistics(
-            val_interval_size=self.config.logging_steps,
-            vision_dataset=config.vision_dataset
-        )
-        self.model = vision_model_loader(model_type=SupportedVisionModels.HookedResnet, dataset=config.vision_dataset)
-        self.dataset = get_unlearning_dataset(dataset=config.vision_dataset, batch_size=config.batch_size)
-
-    def train(self):
-        
-        try:
-            torch.set_float32_matmul_precision("high")
-        except:
-            logger.info('torch float32_matmul_precision not supported')
-
-        adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
-        criterion = nn.CrossEntropyLoss()
-        train_loader = self.dataset.get_train_loader()
-        self.model.train()
-        self.model = self.model.to(self.config.device)
-
-        if self.config.step_limit is not None:
-            enumerator = list(enumerate(train_loader))[:self.config.step_limit]
-        else:
-            enumerator = enumerate(train_loader)
-
-        for e in range(self.config.epochs):
-            for step, (inputs, targets) in enumerator:
-                inputs = inputs.to(self.config.device)
-                targets = targets.to(self.config.device)
-
-                preds = self.model(inputs)
-                train_loss: Tensor = criterion(preds, targets)
-                train_loss.backward()
-                adam_optimizer.step()
-
-                grad_norm: float = self.train_statistics.get_grad_norm(self.model)
-                self.train_statistics.record_grad_norm(grad_norm)
-                self.train_statistics.record_train_loss(train_loss.item())
-
-                adam_optimizer.zero_grad()
-
-                if step % self.config.logging_steps == 0:
-                    logger.info(
-                        f"Epoch {e} | Step {step} | ResNet on {self.config.vision_dataset.value} train loss {train_loss.item()} | Grad norm {grad_norm}"
-                    )
-                    self.train_statistics.plot()
-                    self.val()
-                    self.model.train()
-
-        checkpoint_path: Path = self.checkpoint()
-        logger.info(f"Resnet checkpoints saved to {checkpoint_path}")
-        logger.info("Resnet training complete.")
-        return checkpoint_path
-
-    def val(self) -> None:
-        criterion = nn.CrossEntropyLoss()
-
-        self.model = self.model.to(self.config.device)
-        self.model.eval()
-        val_loader = self.dataset.get_val_loader()
-
-        test_loss, num_batches = 0, len(val_loader)
-        score, total = 0, len(val_loader.dataset)
-        with torch.no_grad():
-            for i, (input, target) in enumerate(val_loader):
-                input = input.to(self.config.device)
-                target = target.to(self.config.device)
-
-                preds: torch.Tensor = self.model(input)
-                test_loss += criterion(preds, target).item()
-
-                score += (preds.argmax(1) == target).type(torch.float).sum().item()
-
-            test_loss /= num_batches
-            score /= total
-
-        self.train_statistics.record_val_loss(test_loss)
-        self.train_statistics.record_val_score(score)
-
-        logger.info(
-            f"Resnet test loss on {self.config.vision_dataset.value} {round(test_loss, 5)} | Score {round(100 * score, 1)} %"
-        )
-
-    def checkpoint(self) -> Path:
-        """Returns checkpoint path."""
-        d: Union[str, Path] = self.config.checkpoint_dir
-        if type(d) is str:
-            d = Path(d)
-        d = d / f'{SupportedVisionModels.HookedResnet.value}_{self.config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}'
-        d.mkdir(exist_ok=True, parents=True)
-
-        now = datetime.now().strftime("%d_%H_%M")
-        file_name = f"{SupportedVisionModels.HookedResnet.value}_{self.config.vision_dataset.value}.pt"
-
-        checkpoint_path = d / file_name
-        torch.save(self.model.state_dict(), checkpoint_path)
-        return checkpoint_path
-
-
-if __name__ == "__main__":
-    # config = VisionModelTrainerConfig()
-    # trainer = VisionModelTrainer(config)
-    # trainer.train()
-
-    config = GCNTrainerConfig(
-        vision_model_architecture=SupportedVisionModels.HookedResnet,
-        vision_model_path=sorted(
-            glob.glob("/home/claire/mimu/checkpoints/HookedResnet_MNIST/*.pt")
-        )[0],
-        vision_dataset=SupportedDatasets.MNIST,
-    )
-    trainer = GCNTrainer(config)
-    trainer.train()
