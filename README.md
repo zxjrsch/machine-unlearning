@@ -168,4 +168,8 @@ uv run pre-commit run --all-files
 
 ```bash
  uv run pytest -s
+
+ # run specific test
+ uv run pytest tests/test_utils_data.py::test_mnist -s
 ```
+
