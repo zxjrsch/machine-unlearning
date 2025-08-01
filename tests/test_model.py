@@ -1,7 +1,7 @@
 import glob
 from pathlib import Path
 
-from model import (HookedMNISTClassifier, HookedResnet, SupportedVisionModels,
+from model import (HookedMLPClassifier, HookedResnet, SupportedVisionModels,
                    vision_model_loader)
 
 
@@ -13,9 +13,9 @@ def test_supported_models():
 
 def test_vision_model_loader():
     model = vision_model_loader(
-        model_type=SupportedVisionModels.HookedMNISTClassifier, compile=False
+        model_type=SupportedVisionModels.HookedMLPClassifier, compile=False
     )
-    assert isinstance(model, HookedMNISTClassifier)
+    assert isinstance(model, HookedMLPClassifier)
 
     checkpoint_dir = Path("checkpoints/resnet")
     if checkpoint_dir.exists() and len(list(checkpoint_dir.iterdir())):

@@ -16,10 +16,10 @@ from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
 from data import GraphGenerator
-from model import HookedMNISTClassifier, MaskingGCN
-from trainer import gumbel_top_k_sampling_v2
+from model import HookedMLPClassifier, MaskingGCN
+from trainer import gumbel_top_k_sampling_v2, SFTConfig, SFTTrainer, SFTModes
 
-from utils_data import SupportedDatasets, get_unlearning_dataset
+from utils_data import SupportedDatasets, get_unlearning_dataset, get_vision_dataset_classes
 from model import SupportedVisionModels, vision_model_loader
 from datetime import datetime
 from glob import glob
@@ -46,6 +46,9 @@ class EvalConfig:
     topK: int = 7000
     kappa: int = 5000
     use_set_difference_masking_strategy: bool = False
+
+    # select finetuning options
+    sft_mode: SFTModes = SFTModes.Randomize_Forget
 
     # subfolder will be created to suit model / dataset
     gcn_base_path: Path = Path('checkpoints/gcn/')
@@ -81,13 +84,29 @@ class Eval:
         self.graph_generator = self.load_graph_generator()
 
         # sft unlearning baseline
-        # self.finetuning_unlearning_model = self.train_sft_model()
+        self.finetuned_unlearning_model = self.train_sft_model()
 
     def get_model_graph_date_str(self, include_date: bool = False) -> str:
         if include_date:
             return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}'
         else:
             return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}' 
+        
+    def get_metric_save_dir(self) -> str:
+        p = self.config.metrics_base_path / f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}'
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    
+    def get_raw_json_metric_save_dir(self) -> str:
+        p = self.config.metrics_base_path / f'json/{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}'
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    
+    def get_metrics_filename_prefix_str(self, include_date: bool = False) -> str:
+        if include_date:
+            return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}_{datetime.now().strftime("%d_%H_%M")}'
+        else:
+            return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}'
 
 
     def get_gcn_path(self) -> Path:
@@ -95,7 +114,7 @@ class Eval:
             return self.config.gcn_path
         else:
             logger.info('No GCN path given, guessing ...')
-            pattern = self.config.gcn_base_path / f'GCN_{self.get_model_graph_date_str()}'
+            pattern = self.config.gcn_base_path / f'GCN_{self.get_model_graph_date_str()}/*.pt'
             return sorted(glob(str(pattern)))[-1]
 
     def get_graph_data_dir(self) -> Path:
@@ -103,6 +122,7 @@ class Eval:
         path = self.config.graph_data_base_path / self.get_model_graph_date_str(include_date=True)
         path.mkdir(parents=True, exist_ok=True)
         return path
+    
 
     def load_graph_generator(self) -> GraphGenerator:
         return GraphGenerator(
@@ -120,54 +140,35 @@ class Eval:
         return model
 
 
-    def mnist_class_representatives(self) -> List[Tuple[Tensor, Tensor]]:
-        dataset = MNIST(
-            root=self.config.data_path, train=False, transform=ToTensor(), download=True
-        )
-        dataset = iter(DataLoader(dataset=dataset, batch_size=1))
+    def get_vision_class_representatives(self) -> List[Tuple[Tensor, Tensor]]:
+        old_batch_size = self.dataset.batch_size
+        self.dataset.reset_batch_size(new_batch_size=1)
+
         representatives = []
-        for d in range(10):
-            data = next(dataset)
-            while data[1].item() != d:
-                data = next(dataset)
+        for d in range(get_vision_dataset_classes(self.config.vision_dataset)):
+            ds = self.dataset.get_single_class(class_id=d, is_train=True)
+            data = next(iter(ds))
+            data[0] = data[0]
             representatives.append(data)
+        self.dataset.reset_batch_size(new_batch_size=old_batch_size)
         return representatives
 
-    def mnist_forget_set(self) -> DataLoader:
-        dataset = MNIST(
-            root=self.config.data_path, train=False, transform=ToTensor(), download=True
-        )
-        forget_indices = (dataset.targets == self.config.forget_digit).nonzero(
-            as_tuple=True
-        )[0]
-        forget_set = Subset(dataset, forget_indices)
-        return DataLoader(dataset=forget_set, batch_size=self.config.batch_size)
+    def get_forget_set(self) -> DataLoader:
+        return self.dataset.get_forget_set(is_train=False)
 
-    def mnist_retain_set(self) -> DataLoader:
-        dataset = MNIST(
-            root=self.config.data_path, train=False, transform=ToTensor(), download=True
-        )
-        retain_indices = (dataset.targets != self.config.forget_digit).nonzero(
-            as_tuple=True
-        )[0]
-        retain_set = Subset(dataset, retain_indices)
-        return DataLoader(dataset=retain_set, batch_size=self.config.batch_size)
+    def get_retain_set(self) -> DataLoader:
+        return self.dataset.get_retain_set(is_train=False)
 
-    def mnist_single_class(self, digit: int) -> DataLoader:
-        dataset = MNIST(
-            root=self.config.data_path, train=False, transform=ToTensor(), download=True
-        )
-        desired_indices = (dataset.targets == digit).nonzero(as_tuple=True)[0]
-        desired_data = Subset(dataset, desired_indices)
-        return DataLoader(dataset=desired_data, batch_size=self.config.batch_size)
+    def get_single_class(self, class_id: int) -> DataLoader:
+        return self.dataset.get_single_class(class_id=class_id, is_train=False)
 
     def compute_representative_masks(
         self, perform_sampling: bool = False
     ) -> List[Tuple[Tensor, int]]:
         """Gets masks for all the classes."""
-        reps = self.mnist_class_representatives()
+        reps = self.get_vision_class_representatives()
 
-        # a list for all digits
+        # a list for all classes
         node_features = self.graph_generator.get_representative_features(reps)
         edge_matrix = self.graph_generator.edge_matrix.to(self.config.device)
 
@@ -194,9 +195,9 @@ class Eval:
 
     def get_model_mask(self) -> Tensor:
         """
-        Set different masking strategy computes the set A of important weights for forget digit prediction,
-        and the set B of important weights for the retain digits, then takes the set difference C = A - B which
-        is considered to be the weights solely responsible for forget digit, and when masking out set C, the model
+        Set different masking strategy computes the set A of important weights for forget class_id prediction,
+        and the set B of important weights for the retain class_ids, then takes the set difference C = A - B which
+        is considered to be the weights solely responsible for forget class_id, and when masking out set C, the model
         degradation on retain is minimal. Thus the cardinality of #C <= top-K value.
 
         If is_set_difference_strategy == False then we generate the mask based on feasibility scores of weights.
@@ -206,8 +207,8 @@ class Eval:
         forget_mask = None
         retain_masks_sum = None
 
-        for mask, digit in mask_label_list:
-            if digit == self.config.forget_digit:
+        for mask, class_id in mask_label_list:
+            if class_id == self.config.forget_class:
                 forget_mask = mask
             else:
                 retain_masks_sum = (
@@ -226,7 +227,7 @@ class Eval:
             )
 
             logger.info(
-                f"top-{self.config.topK} | target layer {self.config.mask_layer} | Retaining {num_keep_weights} ({percent} %)"
+                f"{self.get_model_graph_date_str(include_date=False)} | top-{self.config.topK} | target layer {self.config.mask_layer} | Retaining {num_keep_weights} ({percent} %)"
             )
 
             return (mask == 0).float()
@@ -256,15 +257,15 @@ class Eval:
                 1 - self.config.kappa / self.graph_generator.num_vertices * 100, 2
             )
             logger.info(
-                f"top-{self.config.topK} | target layer {self.config.mask_layer} | retaining (weights - kappa) = {self.graph_generator.num_vertices - self.config.kappa} ({percent} %) parameters."
+                f"{self.get_model_graph_date_str(include_date=False)} | top-{self.config.topK} | target layer {self.config.mask_layer} | retaining (weights - kappa) = {self.graph_generator.num_vertices - self.config.kappa} ({percent} %) parameters."
             )
 
             return mask
 
-    def model_mask_forget_class(self) -> HookedMNISTClassifier:
+    def model_mask_forget_class(self) -> nn.Module:
         forget_class_mask = None
-        for mask, digit in self.compute_representative_masks():
-            if digit == self.config.forget_digit:
+        for mask, class_id in self.compute_representative_masks():
+            if class_id == self.config.forget_class:
                 forget_class_mask = mask
                 break
 
@@ -275,7 +276,7 @@ class Eval:
 
     def get_masked_model(
         self, custom_mask: Union[Tensor, None] = None
-    ) -> HookedMNISTClassifier:
+    ) -> nn.Module:
         """Single layer masking."""
         if custom_mask is None:
             mask: Tensor = self.get_model_mask()
@@ -299,11 +300,11 @@ class Eval:
         key = list(state_dict.keys())[self.config.mask_layer]
         state_dict[key] = layer_matrix
 
-        model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
+        model: nn.Module = vision_model_loader(model_type=self.config.vision_model, dataset=self.config.vision_dataset, eval_mode=True)
         model.load_state_dict(state_dict)
         return model
 
-    def get_randomly_masked_model(self) -> HookedMNISTClassifier:
+    def get_randomly_masked_model(self) -> nn.Module:
         mask = torch.zeros(self.graph_generator.num_vertices, dtype=torch.float32)
         num_1s = self.graph_generator.num_vertices - self.config.kappa
         assert num_1s > 0
@@ -311,26 +312,28 @@ class Eval:
         mask[indices] = 1
         return self.get_masked_model(custom_mask=mask)
 
-    def train_sft_model(self) -> HookedMNISTClassifier:
-        sft_config = UnlearningSFTConfig(
-            original_model_path=self.config.classifier_path,
+    def train_sft_model(self) -> nn.Module:
+        sft_config = SFTConfig(
+            architecture=self.config.vision_model,
+            vision_dataset=self.config.vision_dataset,
+            forget_class=self.config.forget_class,
+            batch_size=32,
+            original_model_path=self.config.vision_model_path,
+            finetuning_mode=self.config.sft_mode,
             save_dir=Path("checkpoints/finetuned_mnist_classifier"),
-            data_dir=self.config.data_path,
             finetune_layer=self.config.mask_layer,
             lr=1e-2,
-            device=self.config.device,
             steps=50,
-            batch_size=4,
             logging_steps=10,
-            forget_digit=self.config.forget_digit,
+            device=self.config.device,
         )
-        trainer = UnlearningSFT(sft_config)
+        trainer = SFTTrainer(sft_config)
         model = trainer.finetune(save_checkpoint=False)
         return model
 
     def inference(
         self,
-        model: HookedMNISTClassifier,
+        model: nn.Module,
         data_loader: DataLoader,
         is_forget_set: bool = True,
         description: str = None,
@@ -357,20 +360,16 @@ class Eval:
                 ):
                     # the mean probability is only meaningful over a single class, which is why we check is_forget_set
                     probs: List[float] = classifier_probs.mean(dim=0).tolist()
-                    mean_prob = probs[self.config.forget_digit]
+                    mean_prob = probs[self.config.forget_class]
 
                     plt.clf()
                     fig, ax = plt.subplots()
                     plt.figure(figsize=(10, 6))
                     plt.bar(range(10), probs, tick_label=[str(i) for i in range(10)])
-                    save_path = (
-                        self.config.metrics_path / f"probabilities/{description}/"
-                    )
+
+                    save_path: Path = self.get_metric_save_dir() / f"probabilities/{description}/"
                     save_path.mkdir(parents=True, exist_ok=True)
-                    save_path = (
-                        save_path
-                        / f"top_k_{self.config.topK}_kappa_{self.config.kappa}.png"
-                    )
+                    save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
 
                     plt.xlabel("Class")
                     plt.ylabel("Probability")
@@ -388,7 +387,7 @@ class Eval:
                     .item()
                 )
 
-                # logger.info(f'@@@@@ Predictions {classifier_probs.tolist()[0]} | Argmax: {preds.argmax(1)[0]} | Forget digit {self.config.forget_digit} @@@@@')
+                # logger.info(f'@@@@@ Predictions {classifier_probs.tolist()[0]} | Argmax: {preds.argmax(1)[0]} | Forget class_id {self.config.forget_class} @@@@@')
 
             test_loss /= num_batches
             test_loss = round(test_loss, 5)
@@ -397,7 +396,7 @@ class Eval:
 
         eval_set = "forget set" if is_forget_set else "retain set"
         logger.info(
-            f"Exp: {description} | test_loss on {eval_set} {test_loss} | Score {score} %"
+            f"Exp: {description} | {self.get_metrics_filename_prefix_str()} | test_loss on {eval_set} {test_loss} | Score {score} %"
         )
 
         metrics = {
@@ -408,7 +407,7 @@ class Eval:
         }
 
         if is_forget_set:
-            metrics["mean_classifier_probability_on_forget_digit"] = mean_prob
+            metrics["mean_classifier_probability_on_forget_class"] = mean_prob
 
         return metrics
 
@@ -434,16 +433,15 @@ class Eval:
 
         plt.suptitle(f"{experiment} (top-{self.config.topK} kappa-{self.config.kappa})")
         plt.tight_layout()
-
-        self.config.metrics_path.mkdir(parents=True, exist_ok=True)
-        save_path = self.config.metrics_path / f"{experiment}/"
+        save_path: Path = self.get_metric_save_dir() / f"metrics"
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = save_path / f"top_{self.config.topK}_kappa_{self.config.kappa}.png"
+        save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
+
         plt.savefig(save_path)
         plt.close()
 
-    def get_class_probability(self, digit: int, model: nn.Module) -> List[float]:
-        data_loader = self.mnist_single_class(digit=digit)
+    def get_class_probability(self, class_id: int, model: nn.Module) -> List[float]:
+        data_loader = self.get_single_class(class_id=class_id)
         model = model.to(self.config.device)
         model.eval()
         with torch.no_grad():
@@ -461,17 +459,17 @@ class Eval:
         )
 
         fig.suptitle(
-            f"Unlearning digit {self.config.forget_digit}", fontsize=16, y=1.05
+            f"Unlearning class_id {self.config.forget_class}", fontsize=16, y=1.05
         )
 
         x = list(range(10))
         distributions = {}
-        for digit, ax in enumerate(axes.flatten()):
-            distribution = self.get_class_probability(digit=digit, model=model)
-            distributions[digit] = distribution
+        for class_id, ax in enumerate(axes.flatten()):
+            distribution = self.get_class_probability(class_id=class_id, model=model)
+            distributions[class_id] = distribution
             colors = plt.cm.viridis(torch.linspace(0, 1, len(x)).numpy())
             ax.bar(x, distribution, align="center", alpha=0.8, color=colors)
-            ax.set_title(f"Digit {digit}")
+            ax.set_title(f"class_id {class_id}")
             ax.set_xticks(x)
             ax.set_xticklabels(x)
             ax.grid(axis="y", linestyle="--", alpha=0.7)
@@ -479,14 +477,10 @@ class Eval:
         fig.supxlabel("Classes", fontsize=14)
         fig.supylabel("Classifier Probability", fontsize=14)
 
-        save_path = (
-            self.config.metrics_path / f"probabilities_all_classes/{description}/"
-        )
+
+        save_path: Path = self.get_metric_save_dir() / f"probabilities_all_classes/{description}/"
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = (
-            save_path
-            / f"{description}_top_k_{self.config.topK}_kappa_{self.config.kappa}.png"
-        )
+        save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
 
         plt.savefig(save_path)
         plt.close()
@@ -508,12 +502,10 @@ class Eval:
         plt.ylabel("Frequency")
         plt.title(f"{model_name} parameter frequency (layer: {self.config.mask_layer})")
 
-        save_path = self.config.metrics_path / f"weight_histograms/{model_name}/"
+        save_path: Path = self.get_metric_save_dir() / f"probabilities_all_classes/weight_histograms/{model_name}/"
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = (
-            save_path
-            / f"{model_name}_top_k_{self.config.topK}_kappa_{self.config.kappa}.png"
-        )
+        save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
+
         plt.savefig(save_path)
         plt.close()
 
@@ -525,7 +517,7 @@ class Eval:
             model=self.get_randomly_masked_model(), description="random"
         )
         self.draw_class_probability(
-            model=self.finetuning_unlearning_model, description="sft"
+            model=self.finetuned_unlearning_model, description="sft"
         )
 
     def eval_weight_distributions(self) -> None:
@@ -535,7 +527,7 @@ class Eval:
             model=self.get_randomly_masked_model(), model_name="random"
         )
         self.draw_weight_distribution(
-            model=self.finetuning_unlearning_model, model_name="sft"
+            model=self.finetuned_unlearning_model, model_name="sft"
         )
 
     def eval_unlearning(self) -> Dict:
@@ -545,28 +537,28 @@ class Eval:
         before_masking_eval_metrics = self.inference(
             description="no masking on forget set",
             model=self.classifier,
-            data_loader=self.mnist_forget_set(),
+            data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
 
         after_masking_eval_metrics = self.inference(
             description="mimu on forget set",
             model=self.get_masked_model(),
-            data_loader=self.mnist_forget_set(),
+            data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
 
         random_baseline_eval_metrics = self.inference(
             description="random on forget set (unlearning)",
             model=self.get_randomly_masked_model(),
-            data_loader=self.mnist_forget_set(),
+            data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
 
         sft_baseline_eval_metrics = self.inference(
             description="SFT baseline on forget set",
-            model=self.finetuning_unlearning_model,
-            data_loader=self.mnist_forget_set(),
+            model=self.finetuned_unlearning_model,
+            data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
 
@@ -594,24 +586,24 @@ class Eval:
             "before_masking_loss": before_masking_eval_metrics["test_loss"],
             "before_masking_score": before_masking_eval_metrics["score"],
             "before_mask_probability": before_masking_eval_metrics[
-                "mean_classifier_probability_on_forget_digit"
+                "mean_classifier_probability_on_forget_class"
             ],
             "after_masking_loss": after_masking_eval_metrics["test_loss"],
             "after_masking_score": after_masking_eval_metrics["score"],
             "after_mask_probability": after_masking_eval_metrics[
-                "mean_classifier_probability_on_forget_digit"
+                "mean_classifier_probability_on_forget_class"
             ],
             # random baseline
             "random_masking_loss": random_baseline_eval_metrics["test_loss"],
             "random_masking_score": random_baseline_eval_metrics["score"],
             "random_masking_probability": random_baseline_eval_metrics[
-                "mean_classifier_probability_on_forget_digit"
+                "mean_classifier_probability_on_forget_class"
             ],
             # sft baseline
             "sft_baseline_loss": sft_baseline_eval_metrics["test_loss"],
             "sft_baseline_score": sft_baseline_eval_metrics["score"],
             "sft_baseline_probability": sft_baseline_eval_metrics[
-                "mean_classifier_probability_on_forget_digit"
+                "mean_classifier_probability_on_forget_class"
             ],
         }
 
@@ -623,28 +615,28 @@ class Eval:
         before_masking_eval_metrics = self.inference(
             description="no masking on retain set",
             model=self.classifier,
-            data_loader=self.mnist_retain_set(),
+            data_loader=self.get_retain_set(),
             is_forget_set=False,
         )
 
         after_masking_eval_metrics = self.inference(
             description="mimu on retain set",
             model=self.get_masked_model(),
-            data_loader=self.mnist_retain_set(),
+            data_loader=self.get_retain_set(),
             is_forget_set=False,
         )
 
         random_baseline_eval_metrics = self.inference(
             description="random retain set (degradation)",
             model=self.get_randomly_masked_model(),
-            data_loader=self.mnist_retain_set(),
+            data_loader=self.get_retain_set(),
             is_forget_set=False,
         )
 
         sft_baseline_eval_metrics = self.inference(
             description="SFT baseline on retain set",
-            model=self.finetuning_unlearning_model,
-            data_loader=self.mnist_retain_set(),
+            model=self.finetuned_unlearning_model,
+            data_loader=self.get_retain_set(),
             is_forget_set=False,
         )
 
@@ -689,28 +681,28 @@ class Eval:
         before_masking_eval_metrics = self.inference(
             description="no masking on forget set",
             model=self.classifier,
-            data_loader=self.mnist_forget_set(),
+            data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
 
         after_masking_eval_metrics = self.inference(
             description="pure class mask on forget set",
             model=self.model_mask_forget_class(),
-            data_loader=self.mnist_forget_set(),
+            data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
 
         random_baseline_eval_metrics = self.inference(
             description="random forget set (efficacy)",
             model=self.get_randomly_masked_model(),
-            data_loader=self.mnist_forget_set(),
+            data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
 
         sft_baseline_eval_metrics = self.inference(
             description="SFT baseline on forget set",
-            model=self.finetuning_unlearning_model,
-            data_loader=self.mnist_forget_set(),
+            model=self.finetuned_unlearning_model,
+            data_loader=self.get_forget_set(),
             is_forget_set=False,
         )
 
@@ -755,7 +747,7 @@ class Eval:
 
         metrics = {
             "id": str(uuid.uuid1()),
-            "forget_digit": self.config.forget_digit,
+            "forget_class": self.config.forget_class,
             "num_graph_vertices": self.graph_generator.num_vertices,
             "num_graph_edges": self.graph_generator.edge_matrix.shape[1],
             "maked_layer": self.config.mask_layer,
@@ -766,9 +758,8 @@ class Eval:
             "mask_efficacy_metrics": mask_efficacy_metrics,
         }
         if save_metrics:
-            self.config.metrics_path.mkdir(exist_ok=True, parents=True)
-            file_path = self.config.metrics_path / "metrics"
-            file_path.mkdir(exist_ok=True, parents=True)
+            
+            file_path: Path = self.get_raw_json_metric_save_dir() 
 
             if self.use_set_difference_masking_strategy:
                 file_path = file_path / f"top-{self.config.topK}.json"
@@ -785,6 +776,32 @@ class Eval:
 
 
 if __name__ == "__main__":
-    config = EvalConfig()
-    eval = Eval(config)
-    metrics = eval.eval()
+    from itertools import product
+    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
+    supported_datasets = [
+        # SupportedDatasets.MNIST, 
+        SupportedDatasets.CIFAR10, 
+        # SupportedDatasets.CIFAR100, 
+        # SupportedDatasets.SVHN, 
+        # SupportedDatasets.IMAGENET_SMALL, 
+        # SupportedDatasets.PLANT_CLASSIFICATION, 
+        # SupportedDatasets.POKEMON_CLASSIFICATION
+    ]
+    for (ma, ds)  in product(model_architectures, supported_datasets):
+
+        config = EvalConfig(
+            vision_model=ma,
+            vision_model_path=sorted(glob(f'checkpoints/{ma.value}_{ds.value}/*.pt'))[-1],
+            vision_dataset=ds
+        )
+        eval = Eval(config)
+        # logger.info(eval.get_gcn_path())
+        # reps = eval.get_vision_class_representatives()
+        # logger.info(len(reps))
+        # logger.info(type(reps))
+        # logger.info(type(reps[0]))
+        # logger.info(reps[0][0].shape)
+        # logger.info('=======')
+        # logger.info(reps[0][1])
+        eval.eval()
+

@@ -9,7 +9,10 @@ from reporter import Reporter, ReporterConfig
 from trainer import (GCNTrainer, GCNTrainerConfig, VisionModelTrainer,
                      VisionModelTrainerConfig)
 from utils_data import SupportedDatasets
+from glob import glob
 
+def eval_single_model_dataset_pair(model_architecture, vision_dataset):
+    pass
 
 def train_mnist_classifier():
     config = VisionModelTrainerConfig()
@@ -20,7 +23,7 @@ def train_mnist_classifier():
 
 def generate_graph(checkpoint_path):
     graph_data_cardinaility = 2048
-    vision_model_type = SupportedVisionModels.HookedMNISTClassifier
+    vision_model_type = SupportedVisionModels.HookedMLPClassifier
     SupportedDatasets.MNIST
     dg = GraphGenerator(
         vision_model_type=vision_model_type,
@@ -67,6 +70,37 @@ def viz():
 
 
 def main():
+
+    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
+    supported_datasets = [
+        # SupportedDatasets.MNIST, 
+        SupportedDatasets.CIFAR10, 
+        # SupportedDatasets.CIFAR100, 
+        # SupportedDatasets.SVHN, 
+        # SupportedDatasets.IMAGENET_SMALL, 
+        # SupportedDatasets.PLANT_CLASSIFICATION, 
+        # SupportedDatasets.POKEMON_CLASSIFICATION
+    ]
+    for (ma, ds)  in product(model_architectures, supported_datasets):
+
+        config = EvalConfig(
+            vision_model=ma,
+            vision_model_path=sorted(glob(f'checkpoints/{ma.value}_{ds.value}/*.pt'))[-1],
+            vision_dataset=ds
+        )
+        eval = Eval(config)
+        # logger.info(eval.get_gcn_path())
+        # reps = eval.get_vision_class_representatives()
+        # logger.info(len(reps))
+        # logger.info(type(reps))
+        # logger.info(type(reps[0]))
+        # logger.info(reps[0][0].shape)
+        # logger.info('=======')
+        # logger.info(reps[0][1])
+        eval.eval()
+
+
+
     logger.info(f"-------- Training Classifier -------")
     # checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
     classifier_checkpoint_path = train_mnist_classifier()

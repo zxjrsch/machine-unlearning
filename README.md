@@ -43,12 +43,20 @@ Save output to file
 nohup bash -c "clear && bash clean.sh && uv run main.py" > output.log 2>&1 &
 ```
 
+### Possible Errors and Quick Fixes 
+
+1. If you run into cpu process errors, try reducing default number of workers for data loaders in `utils_data.py`
+
+2. If you run into batch size mis-matches, set `is_train=True` in your retain or forget dataloader, since
+validation set may not have enough datapoints for your specified batch, as was seen in SFT.
+
+
 ### Supported Models and Datasets
 
 ```python
 # model.py
 class SupportedVisionModels(Enum):
-    HookedMNISTClassifier = HookedMNISTClassifier
+    HookedMLPClassifier = HookedMLPClassifier
     HookedResnet = HookedResnet
 ```
 

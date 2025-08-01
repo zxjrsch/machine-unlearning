@@ -2,7 +2,7 @@ from eval import *
 from itertools import product
 
 def test_eval():
-    model_architectures = [SupportedVisionModels.HookedMNISTClassifier, SupportedVisionModels.HookedResnet]
+    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
     supported_datasets = [
         # SupportedDatasets.MNIST, 
         SupportedDatasets.CIFAR10, 
@@ -20,4 +20,14 @@ def test_eval():
             vision_dataset=ds
         )
         eval = Eval(config)
-        logger.info(eval.get_gcn_path())
+        # logger.info(eval.get_gcn_path())
+        # reps = eval.get_vision_class_representatives()
+        # logger.info(len(reps))
+        # logger.info(type(reps))
+        # logger.info(type(reps[0]))
+        # logger.info(reps[0][0].shape)
+        # logger.info('=======')
+        # logger.info(reps[0][1])
+        eval.eval()
+
+

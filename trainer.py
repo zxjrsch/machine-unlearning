@@ -19,7 +19,7 @@ from torch.distributions import Categorical
 from tqdm import tqdm
 
 from data import GCNBatch
-from model import (HookedMNISTClassifier, HookedModel, MaskingGCN,
+from model import (HookedMLPClassifier, HookedModel, MaskingGCN,
                    SupportedVisionModels, vision_model_loader)
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
@@ -388,7 +388,7 @@ class GCNTrainer:
 
         if (
             config.vision_model_architecture
-            == SupportedVisionModels.HookedMNISTClassifier
+            == SupportedVisionModels.HookedMLPClassifier
         ):
             self.vision_model_layer_shapes = self.vision_model.dim_array + [
                 self.vision_model.out_dim
@@ -438,12 +438,12 @@ class GCNTrainer:
         return [counts[self.mask_layer]]
 
     def mask_full_model(self, mask: Tensor) -> nn.Module:
-        # assumes HookedMNISTClassifier used so parameters are matrices
+        # assumes HookedMLPClassifier used so parameters are matrices
         # full model unlearning is not currently supported due to computation burden seen in inital experiments
 
         assert (
             self.config.vision_model_architecture
-            == SupportedVisionModels.HookedMNISTClassifier
+            == SupportedVisionModels.HookedMLPClassifier
         )
         mask = mask.to(self.device)
         self.weight_vector = self.weight_vector.to(self.device)
@@ -466,7 +466,7 @@ class GCNTrainer:
             state_dict[key] = layers[i]
             i += 1
 
-        model: HookedMNISTClassifier = torch.compile(HookedMNISTClassifier())
+        model: HookedMLPClassifier = torch.compile(HookedMLPClassifier())
         model.load_state_dict(state_dict)
         return model
 
@@ -708,11 +708,11 @@ class SFTConfig:
     vision_dataset: SupportedDatasets
 
     # dataset
-    forget_digit: int = 9
+    forget_class: int = 9
     batch_size: int = 4
 
     # model
-    init_model: Optional[HookedMNISTClassifier] = None  # pass in argument
+    init_model: Optional[HookedMLPClassifier] = None  # pass in argument
     original_model_path: Optional[Path] = None  # or loaded from path
 
     # hardware
@@ -738,14 +738,14 @@ class SFTTrainer:
         self.dataset = get_unlearning_dataset(
             dataset=config.vision_dataset,
             batch_size=config.batch_size,
-            forget_class=config.forget_digit,
+            forget_class=config.forget_class,
         )
         self.num_classes = get_vision_dataset_classes(config.vision_dataset)
         self.sampling_distribution = Categorical(
             probs=torch.ones(self.num_classes) / self.num_classes
         )
 
-    def load_forzen_model(self) -> HookedMNISTClassifier:
+    def load_forzen_model(self) -> HookedMLPClassifier:
         """Freezes all layers except finetuning layer."""
 
         if self.config.init_model is not None:
@@ -871,7 +871,7 @@ class SFTTrainer:
         d.mkdir(exist_ok=True, parents=True)
 
         now = datetime.now().strftime("%d_%H_%M")
-        file_name = f"sft_{self.config.finetuning_mode.value}_{self.config.forget_digit}_{now}.pt"
+        file_name = f"sft_{self.config.finetuning_mode.value}_{self.config.finetuning_mode.value}_{self.config.forget_class}_{now}.pt"
 
         checkpoint_path = d / file_name
         torch.save(self.model.state_dict(), checkpoint_path)

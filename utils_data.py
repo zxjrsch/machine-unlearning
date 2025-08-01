@@ -43,15 +43,19 @@ class UnlearningDataset(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
+    def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
         raise NotImplementedError()
 
     @abstractmethod
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
         raise NotImplementedError()
 
-    def get_forget_set(self, is_train: bool = False) -> DataLoader:
+    def get_forget_set(self, is_train: bool = True) -> DataLoader:
         return self.get_single_class(class_id=self.forget_class, is_train=is_train)
+    
+    def reset_batch_size(self, new_batch_size: int = 1)  -> None:
+        self.batch_size = new_batch_size
+
 
 
 def get_unlearning_dataset(
@@ -132,6 +136,7 @@ def get_unlearning_dataset(
 
 
 def get_vision_dataset_classes(dataset: SupportedDatasets) -> int:
+    """Number of classes in respective vision datasets."""
     if dataset == SupportedDatasets.MNIST:
         return 10
     elif dataset == SupportedDatasets.CIFAR10:
@@ -174,7 +179,7 @@ class MIMU_mnist(UnlearningDataset):
         )
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
 
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
         dataset = datasets.MNIST(
             root=self.dataset_path,
             train=is_train,
@@ -187,7 +192,7 @@ class MIMU_mnist(UnlearningDataset):
         retain_set = Subset(dataset, retain_indices)
         return DataLoader(dataset=retain_set, batch_size=self.batch_size)
 
-    def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
+    def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
         dataset = datasets.MNIST(
             root=self.dataset_path,
             train=is_train,
@@ -236,7 +241,7 @@ class MIMU_cifar10(UnlearningDataset):
 
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
 
-    def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
+    def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
 
         dataset = datasets.CIFAR10(
             root=self.dataset_path,
@@ -249,7 +254,7 @@ class MIMU_cifar10(UnlearningDataset):
         forget_set = Subset(dataset, forget_indices)
         return DataLoader(dataset=forget_set, batch_size=self.batch_size)
 
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
 
         dataset = datasets.CIFAR10(
             root=self.dataset_path,
@@ -302,7 +307,7 @@ class MIMU_cifar100(UnlearningDataset):
 
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
 
-    def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
+    def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
         dataset = datasets.CIFAR100(
             root=self.dataset_path,
             train=is_train,
@@ -314,7 +319,7 @@ class MIMU_cifar100(UnlearningDataset):
         forget_set = Subset(dataset, forget_indices)
         return DataLoader(dataset=forget_set, batch_size=self.batch_size)
 
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
 
         dataset = datasets.CIFAR100(
             root=self.dataset_path,
@@ -362,7 +367,7 @@ class MIMU_svhn(UnlearningDataset):
         dataset.labels = torch.tensor(dataset.labels)
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
 
-    def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
+    def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
         dataset = datasets.SVHN(
             root=self.dataset_path,
             split="train" if is_train else "test",
@@ -375,7 +380,7 @@ class MIMU_svhn(UnlearningDataset):
         forget_set = Subset(dataset, forget_indices)
         return DataLoader(dataset=forget_set, batch_size=self.batch_size)
 
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
         dataset = datasets.SVHN(
             root=self.dataset_path,
             split="train" if is_train else "test",
@@ -391,7 +396,7 @@ class MIMU_svhn(UnlearningDataset):
 class ImageNetDataset(Dataset):
     def __init__(
         self,
-        is_train: bool = False,
+        is_train: bool = True,
         transform=None,
         dataset_path="~/Datasets/ImageNet-small",
     ):
@@ -487,7 +492,7 @@ class MIMU_imagenet_small(UnlearningDataset):
             shuffle=True,
         )
 
-    def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
+    def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
         dataset = ImageNetDataset(is_train=is_train, dataset_path=self.dataset_path)
 
         forget_indices = (dataset.labels == class_id).nonzero(as_tuple=True)[0]
@@ -499,7 +504,7 @@ class MIMU_imagenet_small(UnlearningDataset):
             shuffle=True,
         )
 
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
         dataset = ImageNetDataset(is_train=is_train, dataset_path=self.dataset_path)
 
         forget_indices = (dataset.labels != self.forget_class).nonzero(as_tuple=True)[0]
@@ -576,7 +581,7 @@ class MIMU_pokemon(UnlearningDataset):
             shuffle=True,
         )
 
-    def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
+    def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
 
         if is_train:
             dataset = self.get_dataset(split="train").filter(
@@ -598,7 +603,7 @@ class MIMU_pokemon(UnlearningDataset):
             shuffle=True,
         )
 
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
         if is_train:
             dataset = self.get_dataset(split="train").filter(
                 lambda x: x["label"] != self.forget_class
@@ -716,7 +721,7 @@ class MIMU_plant(UnlearningDataset):
             shuffle=True,
         )
 
-    def get_retain_set(self, is_train: bool = False) -> DataLoader:
+    def get_retain_set(self, is_train: bool = True) -> DataLoader:
         dataset = self.get_dataset(is_train=is_train, enforce_limit=True).filter(
             lambda x: x["label"] != self.forget_class
         )

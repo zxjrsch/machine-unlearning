@@ -16,7 +16,7 @@ from utils_data import SupportedDatasets, get_vision_dataset_classes
 
 
 class SupportedVisionModels(Enum):
-    HookedMNISTClassifier = "HookedMNISTClassifier"
+    HookedMLPClassifier = "HookedMLPClassifier"
     HookedResnet = "HookedResnet"
 
 
@@ -130,7 +130,7 @@ class HookedModel(ABC):
         # weights are not reset because they are fixed
 
 
-class HookedMNISTClassifier(nn.Module, HookedModel):
+class HookedMLPClassifier(nn.Module, HookedModel):
     def __init__(
         self,
         num_classes: int = 10,
@@ -140,7 +140,7 @@ class HookedMNISTClassifier(nn.Module, HookedModel):
     ) -> None:
         assert len(hidden_dims) > 0  # requires at least one hidden layer
         HookedModel.__init__(
-            self, model_string=SupportedVisionModels.HookedMNISTClassifier.value
+            self, model_string=SupportedVisionModels.HookedMLPClassifier.value
         )
         nn.Module.__init__(self)
 
@@ -472,7 +472,7 @@ def model_factory(
         # exiting pretrained models are all compiled
         model = torch.compile(model)
         if eval_mode:
-            logger.info("eval mode")
+            # logger.info("eval mode")
             model = model.eval()
         if load_pretrained_from_path is not None and not compile:
             logger.info(
@@ -498,10 +498,10 @@ def vision_model_loader(
     Specify dataset to initalize models with suitable input channels or output classes.
     """
 
-    if model_type == SupportedVisionModels.HookedMNISTClassifier:
+    if model_type == SupportedVisionModels.HookedMLPClassifier:
         if dataset == SupportedDatasets.MNIST:
             return model_factory(
-                HookedMNISTClassifier,
+                HookedMLPClassifier,
                 load_pretrained_from_path,
                 compile,
                 eval_mode,
@@ -509,7 +509,7 @@ def vision_model_loader(
             )
         if dataset == SupportedDatasets.CIFAR10:
             return model_factory(
-                HookedMNISTClassifier,
+                HookedMLPClassifier,
                 load_pretrained_from_path,
                 compile,
                 eval_mode,
@@ -518,7 +518,7 @@ def vision_model_loader(
             )
         if dataset == SupportedDatasets.CIFAR100:
             return model_factory(
-                HookedMNISTClassifier,
+                HookedMLPClassifier,
                 load_pretrained_from_path,
                 compile,
                 eval_mode,
@@ -527,7 +527,7 @@ def vision_model_loader(
             )
         if dataset == SupportedDatasets.SVHN:
             return model_factory(
-                HookedMNISTClassifier,
+                HookedMLPClassifier,
                 load_pretrained_from_path,
                 compile,
                 eval_mode,
@@ -536,7 +536,7 @@ def vision_model_loader(
             )
         if dataset == SupportedDatasets.IMAGENET_SMALL:
             return model_factory(
-                HookedMNISTClassifier,
+                HookedMLPClassifier,
                 load_pretrained_from_path,
                 compile,
                 eval_mode,
@@ -547,7 +547,7 @@ def vision_model_loader(
             )
         if dataset == SupportedDatasets.PLANT_CLASSIFICATION:
             return model_factory(
-                HookedMNISTClassifier,
+                HookedMLPClassifier,
                 load_pretrained_from_path,
                 compile,
                 eval_mode,
@@ -558,7 +558,7 @@ def vision_model_loader(
             )
         if dataset == SupportedDatasets.POKEMON_CLASSIFICATION:
             return model_factory(
-                HookedMNISTClassifier,
+                HookedMLPClassifier,
                 load_pretrained_from_path,
                 compile,
                 eval_mode,

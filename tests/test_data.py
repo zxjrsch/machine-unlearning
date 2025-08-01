@@ -6,7 +6,7 @@ from time import perf_counter
 import glob
 
 def test_graph_generator():
-    model_architectures = [SupportedVisionModels.HookedMNISTClassifier, SupportedVisionModels.HookedResnet]
+    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
     supported_datasets = [
         # SupportedDatasets.MNIST, 
         SupportedDatasets.CIFAR10, 

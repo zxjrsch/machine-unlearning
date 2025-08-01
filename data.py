@@ -404,7 +404,7 @@ class GraphGenerator(ModelInspector):
         for j in range(len(activations)):
             m, n = dims[j], dims[j + 1]
 
-            # indexing specific to HookedMNISTClassifier models
+            # indexing specific to HookedMLPClassifier models
             input_activation = activations[j].input_activation[0].squeeze()
             output_activation = activations[j].output_activation[0].squeeze()
 

@@ -6,7 +6,7 @@ import glob
 
 def test_vision_trainer():
 
-    model_architectures = [SupportedVisionModels.HookedMNISTClassifier, SupportedVisionModels.HookedResnet]
+    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
     supported_datasets = [
         # SupportedDatasets.MNIST, 
         SupportedDatasets.CIFAR10, 
@@ -31,7 +31,7 @@ def test_vision_trainer():
         logger.info(f'Training {ma.value} on {ds.value} took {round(b-a)} seconds, checkpoint saved to {path}.')
         
 def test_sft_trainer():
-    model_architectures = [SupportedVisionModels.HookedMNISTClassifier, SupportedVisionModels.HookedResnet]
+    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
     supported_datasets = [
         # SupportedDatasets.MNIST, 
         SupportedDatasets.CIFAR10, 

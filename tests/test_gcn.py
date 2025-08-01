@@ -7,7 +7,7 @@ import glob
 
 def test_gcn():
 
-    model_architectures = [SupportedVisionModels.HookedMNISTClassifier, SupportedVisionModels.HookedResnet]
+    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
     supported_datasets = [
         # SupportedDatasets.MNIST, 
         SupportedDatasets.CIFAR10, 
