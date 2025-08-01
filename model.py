@@ -12,7 +12,7 @@ from torch.utils.hooks import RemovableHandle
 from torch_geometric.nn import GCNConv, MessagePassing
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
 
-from utils_data import SupportedDatasets
+from utils_data import SupportedDatasets, get_vision_dataset_classes
 
 
 class SupportedVisionModels(Enum):
@@ -133,8 +133,8 @@ class HookedModel(ABC):
 class HookedMNISTClassifier(nn.Module, HookedModel):
     def __init__(
         self,
-        mnist_classes: int = 10,
-        mnist_dim: int = 28 * 28,
+        num_classes: int = 10,
+        image_dim: int = 28 * 28,
         include_bias: bool = False,
         hidden_dims: List[int] = [128, 64],
     ) -> None:
@@ -146,9 +146,9 @@ class HookedMNISTClassifier(nn.Module, HookedModel):
 
         assert not include_bias  # current graph generation does not support bias
 
-        self.out_dim = mnist_classes
+        self.out_dim = num_classes
         self.include_bias = include_bias
-        self.dim_array = [mnist_dim] + hidden_dims
+        self.dim_array = [image_dim] + hidden_dims
 
         self.flatten = nn.Flatten()
         self.hidden_layers = nn.ModuleDict(
@@ -161,7 +161,7 @@ class HookedMNISTClassifier(nn.Module, HookedModel):
         )
         self.classifier = nn.Linear(
             in_features=self.dim_array[-1],
-            out_features=mnist_classes,
+            out_features=num_classes,
             bias=self.include_bias,
         )
 
@@ -499,13 +499,74 @@ def vision_model_loader(
     """
 
     if model_type == SupportedVisionModels.HookedMNISTClassifier:
-        return model_factory(
-            HookedMNISTClassifier,
-            load_pretrained_from_path,
-            compile,
-            eval_mode,
-            **kwargs,
-        )
+        if dataset == SupportedDatasets.MNIST:
+            return model_factory(
+                HookedMNISTClassifier,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                **kwargs,
+            )
+        if dataset == SupportedDatasets.CIFAR10:
+            return model_factory(
+                HookedMNISTClassifier,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                image_dim=3 * 32 * 32,
+                num_classes=get_vision_dataset_classes(SupportedDatasets.CIFAR10),
+            )
+        if dataset == SupportedDatasets.CIFAR100:
+            return model_factory(
+                HookedMNISTClassifier,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                image_dim=3 * 32 * 32,
+                num_classes=get_vision_dataset_classes(SupportedDatasets.CIFAR100),
+            )
+        if dataset == SupportedDatasets.SVHN:
+            return model_factory(
+                HookedMNISTClassifier,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                image_dim=3 * 32 * 32,
+                num_classes=get_vision_dataset_classes(SupportedDatasets.SVHN),
+            )
+        if dataset == SupportedDatasets.IMAGENET_SMALL:
+            return model_factory(
+                HookedMNISTClassifier,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                image_dim=3 * 128 * 128,
+                num_classes=get_vision_dataset_classes(
+                    SupportedDatasets.IMAGENET_SMALL
+                ),
+            )
+        if dataset == SupportedDatasets.PLANT_CLASSIFICATION:
+            return model_factory(
+                HookedMNISTClassifier,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                image_dim=3 * 128 * 128,
+                num_classes=get_vision_dataset_classes(
+                    SupportedDatasets.PLANT_CLASSIFICATION
+                ),
+            )
+        if dataset == SupportedDatasets.POKEMON_CLASSIFICATION:
+            return model_factory(
+                HookedMNISTClassifier,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                image_dim=3 * 128 * 128,
+                num_classes=get_vision_dataset_classes(
+                    SupportedDatasets.POKEMON_CLASSIFICATION
+                ),
+            )
     elif model_type == SupportedVisionModels.HookedResnet:
         if dataset == SupportedDatasets.MNIST:
             return model_factory(
@@ -514,11 +575,75 @@ def vision_model_loader(
                 compile,
                 eval_mode,
                 num_in_channels=1,
+                num_classes=get_vision_dataset_classes(SupportedDatasets.MNIST),
                 **kwargs,
             )
-        else:
+        if dataset == SupportedDatasets.CIFAR10:
             return model_factory(
-                HookedResnet, load_pretrained_from_path, compile, eval_mode, **kwargs
+                HookedResnet,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                num_in_channels=3,
+                num_classes=get_vision_dataset_classes(SupportedDatasets.CIFAR10),
+                **kwargs,
+            )
+        if dataset == SupportedDatasets.CIFAR100:
+            return model_factory(
+                HookedResnet,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                num_in_channels=3,
+                num_classes=get_vision_dataset_classes(SupportedDatasets.CIFAR100),
+                **kwargs,
+            )
+
+        if dataset == SupportedDatasets.SVHN:
+            return model_factory(
+                HookedResnet,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                num_in_channels=3,
+                num_classes=get_vision_dataset_classes(SupportedDatasets.SVHN),
+                **kwargs,
+            )
+        if dataset == SupportedDatasets.IMAGENET_SMALL:
+            return model_factory(
+                HookedResnet,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                num_in_channels=3,
+                num_classes=get_vision_dataset_classes(
+                    SupportedDatasets.IMAGENET_SMALL
+                ),
+                **kwargs,
+            )
+        if dataset == SupportedDatasets.PLANT_CLASSIFICATION:
+            return model_factory(
+                HookedResnet,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                num_in_channels=3,
+                num_classes=get_vision_dataset_classes(
+                    SupportedDatasets.PLANT_CLASSIFICATION
+                ),
+                **kwargs,
+            )
+        if dataset == SupportedDatasets.POKEMON_CLASSIFICATION:
+            return model_factory(
+                HookedResnet,
+                load_pretrained_from_path,
+                compile,
+                eval_mode,
+                num_in_channels=3,
+                num_classes=get_vision_dataset_classes(
+                    SupportedDatasets.POKEMON_CLASSIFICATION
+                ),
+                **kwargs,
             )
     else:
         raise ValueError(f"Unsupported model type: {model_type}")

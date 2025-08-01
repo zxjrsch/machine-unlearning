@@ -17,8 +17,7 @@ from torchvision.transforms import ToTensor
 
 from data import GraphGenerator
 from model import HookedMNISTClassifier, MaskingGCN
-from trainer import (UnlearningSFT, UnlearningSFTConfig,
-                     gumbel_top_k_sampling_v2)
+from trainer import gumbel_top_k_sampling_v2
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -34,7 +33,7 @@ class EvalConfig:
     metrics_path: Path = Path("eval/Metrics and Plots")
     forget_digit: int = 9
     batch_size: int = 256
-    device: str = global_config.device
+    device: str = global_config["device"]
     mask_layer = -2
     topK: int = 7000
     kappa: int = 5000

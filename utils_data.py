@@ -403,7 +403,7 @@ class ImageNetDataset(Dataset):
 
         self.transform = transform or Compose(
             [
-                Resize((256, 256)),
+                Resize((128, 128)),
                 ToTensor(),
                 Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
             ]
@@ -451,9 +451,13 @@ class ImageNetDataset(Dataset):
 
 class MIMU_imagenet_small(UnlearningDataset):
     def __init__(
-        self, forget_class=0, batch_size=64, dataset_path="~/Datasets/ImageNet-small"
+        self,
+        forget_class=0,
+        batch_size=64,
+        dataset_path="~/Datasets/ImageNet-small",
+        num_workers: int = 64,
     ):
-
+        self.num_workers = num_workers
         super().__init__(
             dataset_name=SupportedDatasets.IMAGENET_SMALL.value,
             forget_class=forget_class,
@@ -467,29 +471,51 @@ class MIMU_imagenet_small(UnlearningDataset):
 
     def get_train_loader(self) -> DataLoader:
         dataset = ImageNetDataset(is_train=True, dataset_path=self.dataset_path)
-        return DataLoader(dataset=dataset, batch_size=self.batch_size)
+        return DataLoader(
+            dataset=dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+        )
 
     def get_val_loader(self) -> DataLoader:
         dataset = ImageNetDataset(is_train=False, dataset_path=self.dataset_path)
-        return DataLoader(dataset=dataset, batch_size=self.batch_size)
+        return DataLoader(
+            dataset=dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+        )
 
     def get_single_class(self, class_id: int, is_train: bool = False) -> DataLoader:
         dataset = ImageNetDataset(is_train=is_train, dataset_path=self.dataset_path)
 
         forget_indices = (dataset.labels == class_id).nonzero(as_tuple=True)[0]
         forget_set = Subset(dataset, forget_indices)
-        return DataLoader(dataset=forget_set, batch_size=self.batch_size)
+        return DataLoader(
+            dataset=forget_set,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+        )
 
     def get_retain_set(self, is_train: bool = False) -> DataLoader:
         dataset = ImageNetDataset(is_train=is_train, dataset_path=self.dataset_path)
 
         forget_indices = (dataset.labels != self.forget_class).nonzero(as_tuple=True)[0]
         forget_set = Subset(dataset, forget_indices)
-        return DataLoader(dataset=forget_set, batch_size=self.batch_size)
+        return DataLoader(
+            dataset=forget_set,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+        )
 
 
 class MIMU_pokemon(UnlearningDataset):
-    transform = Compose([ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
+    transform = Compose(
+        [Resize((128, 128)), ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    )
 
     def __init__(
         self,
@@ -525,7 +551,7 @@ class MIMU_pokemon(UnlearningDataset):
 
     def get_dataset(self, split: str):
         return (
-            load_dataset(self.dataset_path, split=split)
+            load_dataset(self.dataset_path, split=split, num_proc=64)
             .with_format("torch")
             .with_transform(MIMU_pokemon.batch_transform)
         )
@@ -595,7 +621,7 @@ class MIMU_pokemon(UnlearningDataset):
 
 class MIMU_plant(UnlearningDataset):
     transform = Compose(
-        [Resize((256, 256)), ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+        [Resize((128, 128)), ToTensor(), Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
     )
 
     def __init__(
@@ -603,7 +629,7 @@ class MIMU_plant(UnlearningDataset):
         forget_class=0,
         batch_size=64,
         dataset_path="~/Datasets/Plant-classification",
-        retain_forget_set_limit: int = 1024,
+        data_cardinality_limit: int = 1024,
     ):
 
         super().__init__(
@@ -617,7 +643,7 @@ class MIMU_plant(UnlearningDataset):
             self.dataset_path
         ), f"Data not found, need to run data scripts to download and unzip this dataset."
 
-        self.retain_forget_set_limit = retain_forget_set_limit
+        self.data_cardinality_limit = data_cardinality_limit
 
     @staticmethod
     def batch_transform(x):
@@ -639,10 +665,11 @@ class MIMU_plant(UnlearningDataset):
                 load_dataset(
                     self.dataset_path + "/train",
                     split=(
-                        f"train[:{self.retain_forget_set_limit}]"
+                        f"train[:{self.data_cardinality_limit}]"
                         if enforce_limit
                         else "train"
                     ),
+                    num_proc=64,
                 )
                 .with_format("torch")
                 .with_transform(MIMU_plant.batch_transform)
@@ -650,7 +677,11 @@ class MIMU_plant(UnlearningDataset):
         else:
 
             return (
-                load_dataset(self.dataset_path + "/test", split="train")
+                load_dataset(
+                    self.dataset_path + "/test",
+                    split=f"train[:{self.data_cardinality_limit}]",
+                    num_proc=64,
+                )
                 .with_format("torch")
                 .with_transform(MIMU_plant.batch_transform)
             )
@@ -702,7 +733,7 @@ if __name__ == "__main__":
     # hf_token = os.getenv("HF_TOKEN")
     # if not hf_token:
     #     raise AssertionError("Remember to place HF_TOKEN in .env file")
-    pass
+    from time import perf_counter
 
     # plants = MIMU_plant()
     # ds = plants.get_val_loader()
@@ -711,8 +742,12 @@ if __name__ == "__main__":
     # imagenet = ImageNetDataset()
     # loader = DataLoader(imagenet, 64)
     # batch = next(iter(loader))
-
+    a = perf_counter()
     imgnet = MIMU_imagenet_small()
-    cls = imgnet.get_val_loader()
+    b = perf_counter()
+    print(f"init MIMU_imagenet_small data class in {b-a} sec ")
+    cls = imgnet.get_train_loader()
+    c = perf_counter()
+    print(f"get train loader MIMU_imagenet_small data class in {c-b} sec ")
     print(next(iter(cls))[0].shape)
     # code.interact(local=locals())

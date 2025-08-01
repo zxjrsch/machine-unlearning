@@ -19,8 +19,8 @@ from torch.distributions import Categorical
 from tqdm import tqdm
 
 from data import GCNBatch
-from model import (HookedMNISTClassifier, HookedModel, HookedResnet,
-                   MaskingGCN, SupportedVisionModels, vision_model_loader)
+from model import (HookedMNISTClassifier, HookedModel, MaskingGCN,
+                   SupportedVisionModels, vision_model_loader)
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
@@ -33,7 +33,7 @@ class VisionModelTrainerStatistics:
         vision_model_architecture: SupportedVisionModels,
         vision_dataset: SupportedDatasets,
         val_interval_size: int,
-        device: str = global_config['device'],
+        device: str = global_config["device"],
     ):
         self.vision_model_architecture = vision_model_architecture
         self.vision_dataset = vision_dataset
@@ -46,7 +46,10 @@ class VisionModelTrainerStatistics:
         self.val_interval_size = val_interval_size
 
     def get_save_dir(self):
-        dir =  Path("observability") / f"{self.vision_model_architecture.value}_{self.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}"
+        dir = (
+            Path("observability")
+            / f"{self.vision_model_architecture.value}_{self.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}"
+        )
         dir.mkdir(parents=True, exist_ok=True)
         return dir
 
@@ -91,7 +94,9 @@ class VisionModelTrainerStatistics:
         plt.grid(True)
         plt.legend()
 
-        save_path = self.save_dir / f"train_val_loss_{datetime.now().strftime("%d_%H_%M")}.png"
+        save_path = (
+            self.save_dir / f"train_val_loss_{datetime.now().strftime("%d_%H_%M")}.png"
+        )
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -107,7 +112,9 @@ class VisionModelTrainerStatistics:
         plt.title("Resnet Gradient Norm")
         plt.grid(True)
 
-        save_path = self.save_dir / f"grad_norm_{datetime.now().strftime("%d_%H_%M")}.png"
+        save_path = (
+            self.save_dir / f"grad_norm_{datetime.now().strftime("%d_%H_%M")}.png"
+        )
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -122,7 +129,9 @@ class VisionModelTrainerStatistics:
         plt.title("Resnet Validation Score")
         plt.grid(True)
 
-        save_path = self.save_dir / f"test_score_{datetime.now().strftime("%d_%H_%M")}.png"
+        save_path = (
+            self.save_dir / f"test_score_{datetime.now().strftime("%d_%H_%M")}.png"
+        )
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -134,51 +143,49 @@ class VisionModelTrainerStatistics:
         self.plot_test_score()
 
 
-
 @dataclass
 class VisionModelTrainerConfig:
     architecture: SupportedVisionModels = SupportedVisionModels.HookedResnet
     vision_dataset: SupportedDatasets = SupportedDatasets.MNIST
-
     checkpoint_dir: Path | str = Path("checkpoints")
     logging_steps: int = 50
     plot_statistics: bool = True
-
     batch_size: int = 256
     epochs: int = 1
-    steps: Optional[int] = None  # steps per epoch; set to 1 for quick run / debugging
+    steps: Optional[int] = 1  # steps per epoch; set to 1 for quick run / debugging
     lr: float = 1e-3
-    device = global_config["device"]
+    device: str = global_config["device"]
 
 
 class VisionModelTrainer:
     def __init__(self, config: VisionModelTrainerConfig) -> None:
         self.config = config
         self.model: nn.Module = vision_model_loader(
-            model_type=config.architecture, dataset=config.dataset
+            model_type=config.architecture, dataset=config.vision_dataset
         )
         self.validation_dataloader = get_unlearning_dataset(
             dataset=config.vision_dataset, batch_size=config.batch_size
         ).get_val_loader()
         if config.plot_statistics:
-            self.statistics = VisionModelTrainerStatistics(vision_model_architecture=config.architecture,
-                                                        vision_dataset=config.vision_dataset, 
-                                                        val_interval_size=config.logging_steps, 
-                                                        device=config.device)
+            self.statistics = VisionModelTrainerStatistics(
+                vision_model_architecture=config.architecture,
+                vision_dataset=config.vision_dataset,
+                val_interval_size=config.logging_steps,
+                device=config.device,
+            )
 
     def train(self) -> Path:
         """Returns checkpoint path."""
-
         try:
             torch.set_float32_matmul_precision("high")
         except:
-            logger.info('torch float32_matmul_precision not supported')
+            logger.info("torch float32_matmul_precision not supported")
 
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
         criterion = nn.CrossEntropyLoss()
 
         train_dataloader = get_unlearning_dataset(
-            dataset=config.dataset, batch_size=config.batch_size
+            dataset=self.config.vision_dataset, batch_size=self.config.batch_size
         ).get_train_loader()
 
         # images/second
@@ -190,14 +197,13 @@ class VisionModelTrainer:
             self.model = self.model.to(self.config.device)
 
             # prepare data
-            enumerator = list(enumerate(train_dataloader))
-            if self.config.steps is not None:
-                enumerator = enumerator[: self.config.steps]
-
-            for step, (input, target) in enumerator:
-
+            a = time.perf_counter()
+            step = 0
+            for input, target in train_dataloader:
+                if self.config.steps is not None and step == self.config.steps:
+                    break
+                step += 1
                 t = time.perf_counter()
-
                 input: Tensor = input.to(self.config.device)
                 target: Tensor = target.to(self.config.device)
 
@@ -219,10 +225,15 @@ class VisionModelTrainer:
                 if (1 + step) % self.config.logging_steps == 0:
                     average_throughput = int(sum(throughput) / len(throughput))
                     logger.info(
-                        f"Epoch {epoch + 1} | Step {1+step} | {self.config.architecture.value} loss {round(train_loss.item(), 2)}| {average_throughput} images/second"
+                        f"Epoch {epoch} | Step {step} | {self.config.architecture.value} loss {round(train_loss.item(), 2)}| {average_throughput} images/second"
                     )
                     throughput = []
+                    a = time.perf_counter()
                     self.val()
+                    b = time.perf_counter()
+                    logger.info(
+                        f"Epoch {epoch} | Step {step} | Validation took {b-a} sec"
+                    )
                     self.statistics.plot()
                     self.model.train()
 
@@ -271,7 +282,7 @@ class VisionModelTrainer:
         if type(self.config.checkpoint_dir) is str:
             self.config.checkpoint_dir = Path(self.config.checkpoint_dir)
 
-        dataset_name = self.config.dataset.value
+        dataset_name = self.config.vision_dataset.value
         model_name = self.config.architecture.value
         main_dir: Path = self.config.checkpoint_dir / f"{model_name}_{dataset_name}"
         main_dir.mkdir(exist_ok=True, parents=True)
@@ -693,13 +704,14 @@ class SFTModes(Enum):
 
 @dataclass
 class SFTConfig:
-    # dataset
+    architecture: SupportedVisionModels
     vision_dataset: SupportedDatasets
+
+    # dataset
     forget_digit: int = 9
     batch_size: int = 4
 
     # model
-    architecture: SupportedVisionModels
     init_model: Optional[HookedMNISTClassifier] = None  # pass in argument
     original_model_path: Optional[Path] = None  # or loaded from path
 
@@ -717,7 +729,7 @@ class SFTConfig:
     save_dir: Path = Path("checkpoints/finetuned_models")
 
 
-class SFTConfig:
+class SFTTrainer:
     """"""
 
     def __init__(self, config: SFTConfig) -> None:
@@ -813,7 +825,7 @@ class SFTConfig:
             inputs: Tensor = inputs.to(self.config.device)
             targets = targets.to(self.config.device)
 
-            preds = self.model(input)
+            preds = self.model(inputs)
             train_loss: Tensor = loss_fn(preds, targets)
             train_loss.backward()
             adam_optimizer.step()

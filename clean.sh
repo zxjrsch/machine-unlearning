@@ -1,1 +1,1 @@
-rm -rf checkpoints eval reports
+rm -rf checkpoints eval reports observability
