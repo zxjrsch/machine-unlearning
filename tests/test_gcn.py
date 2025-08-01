@@ -1,11 +1,12 @@
-from data import GraphGenerator
-from model import SupportedDatasets, SupportedVisionModels
-from itertools import product
+from trainer import *
 from loguru import logger
+from itertools import product
 from time import perf_counter
-import glob
+import glob 
 
-def test_graph_generator():
+
+def test_gcn():
+
     model_architectures = [SupportedVisionModels.HookedMNISTClassifier, SupportedVisionModels.HookedResnet]
     supported_datasets = [
         # SupportedDatasets.MNIST, 
@@ -17,17 +18,15 @@ def test_graph_generator():
         # SupportedDatasets.POKEMON_CLASSIFICATION
     ]
     for (ma, ds)  in product(model_architectures, supported_datasets):
-        logger.info(f'========== Generating graph data for {ma.value} on {ds.value} ==========')
-        generator = GraphGenerator(
-            vision_model_type=ma,
-            unlearning_dataset=ds,
-            checkpoint_path=sorted(glob.glob(f'checkpoints/{ma.value}_{ds.value}/*.pt'))[-1],
+        logger.info(f'========== Traning GCN for {ma.value} on {ds.value} ==========')
+        config = GCNTrainerConfig(
+            vision_model_architecture=ma,
+            vision_dataset=ds,
+            vision_model_path=sorted(glob.glob(f'checkpoints/{ma.value}_{ds.value}/*.pt'))[-1]
         )
-
-
+        trainer = GCNTrainer(config)
         a = perf_counter()
-        generator.save_forward_backward_features()
+        path = trainer.train()
         b = perf_counter()
-        logger.info(f'Generating graph data for {ma.value} on {ds.value} took {round(b-a)} seconds.')
-
-
+        logger.info(f'Training GCN {ma.value} on {ds.value} took {round(b-a)} seconds, checkpoint saved to {path}.')
+        

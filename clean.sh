@@ -1,1 +1,2 @@
-rm -rf checkpoints eval reports observability
+clear
+rm -rf datasets/Graphs checkpoints eval reports observability

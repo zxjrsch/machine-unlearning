@@ -619,10 +619,10 @@ class GCNTrainer:
             ax.legend()
 
             mid_path = self.get_save_path(return_dir=True)
-            save_dir = Path("observability") / mid_path
+            save_dir = Path("observability") / f"GCN_{mid_path}"
             save_dir.mkdir(exist_ok=True, parents=True)
             save_path = (
-                save_dir / f"{mid_path}_gcn_loss_terms_top-{self.config.mask_K}.png"
+                save_dir / f"GCN_{mid_path}_loss_terms_top-{self.config.mask_K}.png"
             )
             plt.savefig(save_path)
 
@@ -645,7 +645,7 @@ class GCNTrainer:
         dataset_name = self.config.vision_dataset.value
         model_name = self.config.vision_model_architecture.value
         main_dir: Path = (
-            self.config.gcn_checkpoint_path / f"{model_name}_{dataset_name}"
+            self.config.gcn_checkpoint_path / f"GCN_{model_name}_{dataset_name}"
         )
         main_dir.mkdir(exist_ok=True, parents=True)
 
@@ -654,7 +654,7 @@ class GCNTrainer:
         if return_dir:
             return f"{model_name}_{dataset_name}"
 
-        return main_dir / f"{model_name}_{dataset_name}_{datetime_run_id}.pt"
+        return main_dir / f"GCN_{model_name}_{dataset_name}_{datetime_run_id}.pt"
 
 
 def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
@@ -789,13 +789,15 @@ class SFTTrainer:
         self.model = self.model.to(self.config.device)
 
         forget_set = self.dataset.get_forget_set()
-        train_data = list(enumerate(forget_set)[: self.config.steps])
-
-        for step, (input, _) in train_data:
-            input: Tensor = input.to(self.config.device)
+        step = 0
+        for inputs, _ in forget_set:
+            if step == self.config.steps:
+                break
+            step += 1
+            inputs: Tensor = inputs.to(self.config.device)
             target = self.get_random_targets().to(self.config.device)
 
-            preds = self.model(input)
+            preds = self.model(inputs)
             train_loss: Tensor = loss_fn(preds, target)
             train_loss.backward()
             adam_optimizer.step()
@@ -819,9 +821,12 @@ class SFTTrainer:
         self.model = self.model.to(self.config.device)
 
         retain_set = self.dataset.get_retain_set()
-        train_data = list(enumerate(retain_set)[: self.config.steps])
 
-        for step, (inputs, targets) in train_data:
+        step = 0
+        for inputs, targets in retain_set:
+            if step == self.config.steps:
+                break
+            step += 1
             inputs: Tensor = inputs.to(self.config.device)
             targets = targets.to(self.config.device)
 
@@ -841,7 +846,7 @@ class SFTTrainer:
         )
         return self.model
 
-    def finetune(self, save_checkpoint: bool = False) -> Union[Path, nn.Module]:
+    def finetune(self, save_checkpoint: bool = True) -> Union[Path, nn.Module]:
         if self.config.finetuning_mode == SFTModes.Randomize_Forget:
             self.model = self.finetune_randomize_forget()
         elif self.config.finetuning_mode == SFTModes.Finetune_Retain:
