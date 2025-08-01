@@ -17,7 +17,7 @@ from model import (Activations, HookedModel, SupportedVisionModels,
 from utils_data import (SupportedDatasets, UnlearningDataset,
                         get_unlearning_dataset)
 
-global_config = OmegaConf.load("configs/config.yaml")
+global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
 
 
 class ModelInspector:

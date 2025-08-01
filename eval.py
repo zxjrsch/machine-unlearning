@@ -22,7 +22,7 @@ from trainer import SFTConfig, SFTModes, SFTTrainer
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
-global_config = OmegaConf.load("configs/config.yaml")
+global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
 
 
 @dataclass

@@ -32,6 +32,12 @@ mimu/
 
 ```bash
 uv run main.py
+
+# run in background and save log and returns pid like 368413, 370494
+nohup uv run main.py > experiment-all-4-parallel.log  2>&1 & # 390669
+
+# use ray, change RAY_TMPDIR to your working dir
+RAY_TMPDIR=/home/claire/mimu nohup uv run --directory /home/claire/mimu main.py > experiment-all-4-parallel.log 2>&1 &
 ```
 
 Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. Example command 

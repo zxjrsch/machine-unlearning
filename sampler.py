@@ -1,18 +1,16 @@
-
 import torch
 import torch.nn.functional as F
 from loguru import logger
 from torch import Tensor, nn
 
-
-
-
 # Sujay's sampler
 
 # --- MODIFICATION START: Replace entire Sinkhorn implementation with a memory-safe alternative ---
 
+
 class DifferentiableTopK(nn.Module):
     """A memory-efficient differentiable Top-K operator using a sigmoid approximation."""
+
     def __init__(self, k: int, temperature: float = 0.1):
         super().__init__()
         self.k = k
@@ -28,7 +26,7 @@ class DifferentiableTopK(nn.Module):
         # This is efficient and doesn't require a full sort.
         if self.k < logits.size(-1):
             kth_value, _ = torch.kthvalue(logits, logits.size(-1) - self.k)
-        else: # Handle case where k is equal to or greater than the number of logits
+        else:  # Handle case where k is equal to or greater than the number of logits
             kth_value = logits.min() - 1
 
         # Create a soft mask using a sigmoid function.
@@ -36,7 +34,7 @@ class DifferentiableTopK(nn.Module):
         # Values much smaller than the threshold will be pushed towards 0.
         soft_mask = torch.sigmoid((logits - kth_value) / self.temperature)
         return soft_mask
-    
+
 
 def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
     """
@@ -77,9 +75,9 @@ def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
     return F.softmax(masked_logits / temperature, dim=-1)
 
 
-
 class GumbelSampler(nn.Module):
     """Wrapper for the original Gumbel sampler to make the interface consistent."""
+
     def __init__(self, k: int, temperature: float = 1.0):
         super().__init__()
         self.k = k
@@ -88,22 +86,3 @@ class GumbelSampler(nn.Module):
 
     def forward(self, logits: Tensor) -> Tensor:
         return gumbel_top_k_sampling_v2(logits, self.k, self.temperature)
-
-# # --- MODIFICATION END ---
-
-            
-#         # --- MODIFICATION START: Instantiate the correct memory-safe sampler ---
-#         if self.config.sampling_method == 'sinkhorn':
-#             self.sampler = DifferentiableTopK(k=self.K).to(self.device)
-#         elif self.config.sampling_method == 'gumbel':
-#             self.sampler = GumbelSampler(k=self.K).to(self.device)
-#         else:
-#             raise ValueError(f"Unknown sampling method: {self.config.sampling_method}")
-#         # --- MODIFICATION END ---
-    
-    
-                
-#                 # --- MODIFICATION START: Call the sampler instance directly ---
-#                 mask = self.sampler(emperical_Q_logits)
-#                 # --- MODIFICATION END ---
-                

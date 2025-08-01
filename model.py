@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -470,7 +471,7 @@ def model_factory(
 
     if compile or load_pretrained_from_path is not None:
         # exiting pretrained models are all compiled
-        model = torch.compile(model)
+        # model = torch.compile(model)
         if eval_mode:
             # logger.info("eval mode")
             model = model.eval()
@@ -480,7 +481,18 @@ def model_factory(
             )
 
     if load_pretrained_from_path is not None:
-        model.load_state_dict(torch.load(load_pretrained_from_path, weights_only=True))
+        try:
+            model.load_state_dict(
+                torch.load(load_pretrained_from_path, weights_only=True)
+            )
+        except Exception:
+            state_dict = torch.load(load_pretrained_from_path, weights_only=True)
+            if any(k.startswith("module.") for k in state_dict.keys()):
+                new_state_dict = OrderedDict()
+                for k, v in state_dict.items():
+                    new_state_dict[k.replace("module.", "")] = v
+                state_dict = new_state_dict
+            model.load_state_dict(state_dict)
         logger.info(f"Loaded pretrained model from {load_pretrained_from_path}")
 
     return model

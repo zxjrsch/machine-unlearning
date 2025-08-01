@@ -1,7 +1,7 @@
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-global_config = OmegaConf.load("configs/config.yaml")
+global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")

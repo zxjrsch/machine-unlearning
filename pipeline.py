@@ -74,7 +74,7 @@ class Pipeline:
 
         trainer = VisionModelTrainer(config)
         a = perf_counter()
-        path = trainer.train()
+        path = trainer.train_ddp()
         b = perf_counter()
 
         logger.info(

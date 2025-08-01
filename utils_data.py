@@ -14,6 +14,9 @@ from torchvision.transforms import Compose, Normalize, Resize, ToTensor
 from datasets import load_dataset
 from imagenet_classes import IMAGENET2012_CLASSES
 
+turn_on_download = False
+absolute_path = "/home/claire/mimu/datasets"
+
 
 class SupportedDatasets(Enum):
     MNIST = "MNIST"
@@ -157,7 +160,7 @@ def get_vision_dataset_classes(dataset: SupportedDatasets) -> int:
 
 
 class MIMU_mnist(UnlearningDataset):
-    def __init__(self, forget_class, batch_size, dataset_path="datasets"):
+    def __init__(self, forget_class, batch_size, dataset_path=absolute_path):
         super().__init__(
             dataset_name=SupportedDatasets.MNIST.value,
             forget_class=forget_class,
@@ -168,13 +171,19 @@ class MIMU_mnist(UnlearningDataset):
 
     def get_train_loader(self) -> DataLoader:
         dataset = datasets.MNIST(
-            root=self.dataset_path, train=True, transform=self.transform, download=True
+            root=self.dataset_path,
+            train=True,
+            transform=self.transform,
+            download=turn_on_download,
         )
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
 
     def get_val_loader(self) -> DataLoader:
         dataset = datasets.MNIST(
-            root=self.dataset_path, train=False, transform=self.transform, download=True
+            root=self.dataset_path,
+            train=False,
+            transform=self.transform,
+            download=turn_on_download,
         )
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
 
@@ -183,7 +192,7 @@ class MIMU_mnist(UnlearningDataset):
             root=self.dataset_path,
             train=is_train,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         retain_indices = (dataset.targets != self.forget_class).nonzero(as_tuple=True)[
             0
@@ -196,7 +205,7 @@ class MIMU_mnist(UnlearningDataset):
             root=self.dataset_path,
             train=is_train,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         desired_indices = (dataset.targets == class_id).nonzero(as_tuple=True)[0]
         desired_data = Subset(dataset, desired_indices)
@@ -204,7 +213,9 @@ class MIMU_mnist(UnlearningDataset):
 
 
 class MIMU_cifar10(UnlearningDataset):
-    def __init__(self, forget_class=0, batch_size=64, dataset_path="datasets") -> None:
+    def __init__(
+        self, forget_class=0, batch_size=64, dataset_path=absolute_path
+    ) -> None:
         super().__init__(
             dataset_name=SupportedDatasets.CIFAR10.value,
             forget_class=forget_class,
@@ -221,7 +232,7 @@ class MIMU_cifar10(UnlearningDataset):
             root=self.dataset_path,
             train=True,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
 
         dataset.targets = torch.tensor(dataset.targets)
@@ -234,7 +245,7 @@ class MIMU_cifar10(UnlearningDataset):
             root=self.dataset_path,
             train=False,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.targets = torch.tensor(dataset.targets)
 
@@ -246,7 +257,7 @@ class MIMU_cifar10(UnlearningDataset):
             root=self.dataset_path,
             train=is_train,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.targets = torch.tensor(dataset.targets)
         forget_indices = (dataset.targets == class_id).nonzero(as_tuple=True)[0]
@@ -259,7 +270,7 @@ class MIMU_cifar10(UnlearningDataset):
             root=self.dataset_path,
             train=is_train,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.targets = torch.tensor(dataset.targets)
         forget_indices = (dataset.targets != self.forget_class).nonzero(as_tuple=True)[
@@ -270,7 +281,7 @@ class MIMU_cifar10(UnlearningDataset):
 
 
 class MIMU_cifar100(UnlearningDataset):
-    def __init__(self, forget_class=0, batch_size=64, dataset_path="datasets"):
+    def __init__(self, forget_class=0, batch_size=64, dataset_path=absolute_path):
         super().__init__(
             dataset_name=SupportedDatasets.CIFAR100.value,
             forget_class=forget_class,
@@ -287,7 +298,7 @@ class MIMU_cifar100(UnlearningDataset):
             root=self.dataset_path,
             train=True,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
 
         dataset.targets = torch.tensor(dataset.targets)
@@ -300,7 +311,7 @@ class MIMU_cifar100(UnlearningDataset):
             root=self.dataset_path,
             train=False,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.targets = torch.tensor(dataset.targets)
 
@@ -311,7 +322,7 @@ class MIMU_cifar100(UnlearningDataset):
             root=self.dataset_path,
             train=is_train,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.targets = torch.tensor(dataset.targets)
         forget_indices = (dataset.targets == class_id).nonzero(as_tuple=True)[0]
@@ -324,7 +335,7 @@ class MIMU_cifar100(UnlearningDataset):
             root=self.dataset_path,
             train=is_train,
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.targets = torch.tensor(dataset.targets)
         forget_indices = (dataset.targets != self.forget_class).nonzero(as_tuple=True)[
@@ -335,7 +346,7 @@ class MIMU_cifar100(UnlearningDataset):
 
 
 class MIMU_svhn(UnlearningDataset):
-    def __init__(self, forget_class=0, batch_size=64, dataset_path="datasets"):
+    def __init__(self, forget_class=0, batch_size=64, dataset_path=absolute_path):
         super().__init__(
             dataset_name=SupportedDatasets.SVHN.value,
             forget_class=forget_class,
@@ -351,7 +362,7 @@ class MIMU_svhn(UnlearningDataset):
             root=self.dataset_path,
             split="train",
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.labels = torch.tensor(dataset.labels)
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
@@ -361,7 +372,7 @@ class MIMU_svhn(UnlearningDataset):
             root=self.dataset_path,
             split="test",
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.labels = torch.tensor(dataset.labels)
         return DataLoader(dataset=dataset, batch_size=self.batch_size)
@@ -371,7 +382,7 @@ class MIMU_svhn(UnlearningDataset):
             root=self.dataset_path,
             split="train" if is_train else "test",
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.labels = torch.tensor(dataset.labels)
 
@@ -384,7 +395,7 @@ class MIMU_svhn(UnlearningDataset):
             root=self.dataset_path,
             split="train" if is_train else "test",
             transform=self.transform,
-            download=True,
+            download=turn_on_download,
         )
         dataset.labels = torch.tensor(dataset.labels)
         forget_indices = (dataset.labels != self.forget_class).nonzero(as_tuple=True)[0]

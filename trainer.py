@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, TypedDict, Union
 
 import matplotlib.pyplot as plt
+import ray.train.torch
 import torch
 import torch.nn.functional as F
 from loguru import logger
@@ -18,6 +19,7 @@ from torch import Tensor, nn
 from torch.distributions import Categorical
 from tqdm import tqdm
 
+import ray
 from data import GCNBatch
 from model import (HookedMLPClassifier, HookedModel, MaskingGCN,
                    SupportedVisionModels, vision_model_loader)
@@ -25,7 +27,10 @@ from sampler import DifferentiableTopK, GumbelSampler
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
-global_config = OmegaConf.load("configs/config.yaml")
+# context = ray.init()
+# logger.info(f"dashboard_url: {context.dashboard_url}")
+
+global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
 
 
 class VisionModelTrainerStatistics:
@@ -67,8 +72,9 @@ class VisionModelTrainerStatistics:
         self.test_score.append(score)
 
     def get_grad_norm(self, model: nn.Module) -> float:
+        device = next(model.parameters()).device
 
-        sum_of_squares = torch.tensor(0.0, device=self.device)
+        sum_of_squares = torch.tensor(0.0, device=device)
         for p in model.parameters():
             if p.requires_grad and p.grad is not None:
                 sum_of_squares += p.grad.norm(2).pow(2)
@@ -246,6 +252,129 @@ class VisionModelTrainer:
             logger.info(f"{self.config.architecture.value} training complete.")
         return checkpoint_path
 
+    def ddp_training_loop(self, log_completion: bool = False):
+        """Returns checkpoint path."""
+        try:
+            torch.set_float32_matmul_precision("high")
+        except:
+            logger.info("torch float32_matmul_precision not supported")
+
+        adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
+        criterion = nn.CrossEntropyLoss()
+
+        train_dataloader = get_unlearning_dataset(
+            dataset=self.config.vision_dataset, batch_size=self.config.batch_size
+        ).get_train_loader()
+
+        model = ray.train.torch.prepare_model(copy.deepcopy(self.model.to("cpu")))
+        train_dataloader = ray.train.torch.prepare_data_loader(train_dataloader)
+
+        # images/second
+        throughput = []
+        for epoch in range(self.config.epochs):
+            if ray.train.get_context().get_world_size() > 1:
+                train_dataloader.sampler.set_epoch(epoch)
+
+            # prepare data
+            time.perf_counter()
+            step = 0
+            for input, target in train_dataloader:
+                if self.config.steps is not None and step == self.config.steps:
+                    break
+                step += 1
+                t = time.perf_counter()
+
+                preds = model(input)
+                train_loss: Tensor = criterion(preds, target)
+
+                train_loss.backward()
+                adam_optimizer.step()
+
+                metrics = {"loss": train_loss.item(), "epoch": epoch, "step": step}
+
+                if self.config.plot_statistics:
+                    metrics["grad_norm"] = self.statistics.get_grad_norm(model)
+                    grad_norm: float = self.statistics.get_grad_norm(model)
+                    self.statistics.record_grad_norm(grad_norm)
+                    self.statistics.record_train_loss(train_loss.item())
+
+                adam_optimizer.zero_grad()
+
+                throughput.append(self.config.batch_size / (time.perf_counter() - t))
+
+                if (1 + step) % self.config.logging_steps == 0:
+                    save_dir = self.get_save_dir(include_suffix=False)
+
+                    # Save model state dict to 'model.pt' inside save_dir
+                    torch.save(model.state_dict(), save_dir / "model.pt")
+
+                    ray.train.report(
+                        metrics,
+                        checkpoint=ray.train.Checkpoint.from_directory(save_dir),
+                    )
+
+                    ray.train.report(
+                        metrics,
+                        checkpoint=ray.train.Checkpoint.from_directory(save_dir),
+                    )
+                    if ray.train.get_context().get_world_rank() == 0:
+                        print(metrics)
+                    # average_throughput = int(sum(throughput) / len(throughput))
+                    # logger.info(
+                    #     f"Epoch {epoch} | Step {step} | {self.config.architecture.value} loss {round(train_loss.item(), 2)}| {average_throughput} images/second"
+                    # )
+                    # throughput = []
+                    # a = time.perf_counter()
+                    # self.val()
+                    # b = time.perf_counter()
+                    # logger.info(
+                    #     f"Epoch {epoch} | Step {step} | Validation took {b-a} sec"
+                    # )
+                    # self.statistics.plot()
+                    # self.model.train()
+
+        # checkpoint_path: Path = self.checkpoint()
+        # if log_completion:
+        #     logger.info(
+        #         f"{self.config.architecture.value} checkpoints saved to {checkpoint_path}"
+        #     )
+        #     logger.info(f"{self.config.architecture.value} training complete.")
+        # return checkpoint_path
+
+    def train_ddp(self, num_workers=2) -> Path:
+        scaling_config = ray.train.ScalingConfig(num_workers=num_workers, use_gpu=True)
+        trainer = ray.train.torch.TorchTrainer(
+            self.ddp_training_loop,
+            scaling_config=scaling_config,
+            # [5a] If running in a multi-node cluster, this is where you
+            # should configure the run's persistent storage that is accessible
+            # across all worker nodes.
+            # run_config=ray.train.RunConfig(storage_path="s3://..."),
+        )
+        result = trainer.fit()
+        # with result.checkpoint.as_directory() as checkpoint_dir:
+        #     path = os.path.join(checkpoint_dir, "model.pt")
+        #     model_state_dict = torch.load(path)
+
+        #     self.model.load_state_dict(model_state_dict)
+        with result.checkpoint.as_directory() as checkpoint_dir:
+            path = os.path.join(checkpoint_dir, "model.pt")
+            model_state_dict = torch.load(path)
+
+            # Remove 'module.' prefix if present
+            if any(k.startswith("module.") for k in model_state_dict.keys()):
+                from collections import OrderedDict
+
+                new_state_dict = OrderedDict()
+                for k, v in model_state_dict.items():
+                    name = k.replace("module.", "")  # remove 'module.' prefix
+                    new_state_dict[name] = v
+                model_state_dict = new_state_dict
+
+            self.model.load_state_dict(model_state_dict)
+
+        return path
+
     @torch.no_grad()
     def val(self) -> None:
         # statistics
@@ -279,7 +408,7 @@ class VisionModelTrainer:
             f"Test loss {round(test_loss, 5)} | Score {round(100 * accuracy, 1)} %"
         )
 
-    def get_save_dir(self) -> Path:
+    def get_save_dir(self, include_suffix=True) -> Path:
 
         if type(self.config.checkpoint_dir) is str:
             self.config.checkpoint_dir = Path(self.config.checkpoint_dir)
@@ -290,8 +419,10 @@ class VisionModelTrainer:
         main_dir.mkdir(exist_ok=True, parents=True)
 
         datetime_run_id = datetime.now().strftime("%d_%H_%M")
-
-        return main_dir / f"{model_name}_{dataset_name}_{datetime_run_id}.pt"
+        if include_suffix:
+            return main_dir / f"{model_name}_{dataset_name}_{datetime_run_id}.pt"
+        else:
+            return main_dir
 
     def checkpoint(self) -> Path:
         """Returns checkpoint path."""
