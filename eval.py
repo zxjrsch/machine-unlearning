@@ -42,12 +42,13 @@ class EvalConfig:
 
     # unlearning hyperparameters
     forget_class: int = 0
-    mask_layer = -2
+    mask_layer: int = -2
     topK: int = 7000
     kappa: int = 5000
     use_set_difference_masking_strategy: bool = False
 
     # select finetuning options
+    sft_steps: int = 50
     sft_mode: SFTModes = SFTModes.Randomize_Forget
 
     # subfolder will be created to suit model / dataset
@@ -323,7 +324,7 @@ class Eval:
             save_dir=Path("checkpoints/finetuned_mnist_classifier"),
             finetune_layer=self.config.mask_layer,
             lr=1e-2,
-            steps=50,
+            steps=self.config.sft_steps,
             logging_steps=10,
             device=self.config.device,
         )

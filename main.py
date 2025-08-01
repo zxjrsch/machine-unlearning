@@ -2,74 +2,14 @@ from itertools import product
 
 from loguru import logger
 
-from data import GraphGenerator
-from eval import Eval, EvalConfig
-from model import SupportedVisionModels
-from reporter import Reporter, ReporterConfig
-from trainer import (GCNTrainer, GCNTrainerConfig, VisionModelTrainer,
-                     VisionModelTrainerConfig)
-from utils_data import SupportedDatasets
-from glob import glob
+from pipeline import PipelineConfig, Pipeline
+from model import SupportedDatasets, SupportedVisionModels
 
-def eval_single_model_dataset_pair(model_architecture, vision_dataset):
-    pass
-
-def train_mnist_classifier():
-    config = VisionModelTrainerConfig()
-    trainer = VisionModelTrainer(config)
-    checkpoint_path = trainer.train()
-    return checkpoint_path
-
-
-def generate_graph(checkpoint_path):
-    graph_data_cardinaility = 2048
-    vision_model_type = SupportedVisionModels.HookedMLPClassifier
-    SupportedDatasets.MNIST
-    dg = GraphGenerator(
-        vision_model_type=vision_model_type,
-        checkpoint_path=checkpoint_path,
-        graph_data_cardinaility=graph_data_cardinaility,
-    )
-
-    # # If you wish to obtain single training data points in the form of PyG Data
-    # data = dg.get_data()
-    # logger.info(data)
-
-    # this saves data in batches
-    dg.genereate_graphs()
-
-
-def train_gcn(src_checkpoint, topK=2500):
-    config = GCNTrainerConfig(src_checkpoint=src_checkpoint, mask_K=topK)
-    trainer = GCNTrainer(config=config)
-    ckpt_path = trainer.train()
-    return ckpt_path
-
-    # # test masking
-    # current_model_dim = 8192
-    # trainer.mask_single_layer(mask=torch.rand(current_model_dim))
-
-    # data_loader = GraphDataLoader()
-    # for i in range(5):
-    #     data_loader.next()
-
-
-def evaluation(gcn_path, classifier_path, topK=2500, kappa=2000):
-    # for real usecase
-    config = EvalConfig(
-        gcn_path=gcn_path, classifier_path=classifier_path, topK=topK, kappa=kappa
-    )
-    eval = Eval(config)
-    return eval.eval()
-
-
-def viz():
-    config = ReporterConfig()
-    reporter = Reporter(config)
-    reporter.plot()
+from omegaconf import OmegaConf
 
 
 def main():
+    global_config = OmegaConf.load("configs/config.yaml")
 
     model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
     supported_datasets = [
@@ -82,60 +22,38 @@ def main():
         # SupportedDatasets.POKEMON_CLASSIFICATION
     ]
     for (ma, ds)  in product(model_architectures, supported_datasets):
+        logger.info(f'========== Running pipeline for {ma.value} on {ds.value} ==========')
 
-        config = EvalConfig(
-            vision_model=ma,
-            vision_model_path=sorted(glob(f'checkpoints/{ma.value}_{ds.value}/*.pt'))[-1],
-            vision_dataset=ds
+        config = PipelineConfig(
+            model_architecture=ma,
+            vision_dataset=ds,
+            vision_model_epochs=2,
+            vision_model_max_steps_per_epoch=1, # adjust to something larger, like 256 
+            vision_model_logging_steps=10,
+            vision_model_batch_size=64,
+            vision_model_learning_rate=1e-3,
+            device=global_config['device'],
+            forget_class=0,
+            graph_dataset_size=2048,
+            graph_batch_size=64,
+            gcn_train_steps=1,  # adjust to something larger, like 130
+            gcn_learning_rate=1e-2,
+            gcn_logging_steps=10,
+            sft_steps=1, # adjust to something larger, like 50
+            eval_batch_size=256,
+            eval_draw_plots= True,
+            eval_draw_category_probabilities=True, 
+            topK_list=[8000],
+            kappa_list=[7000],
+
+            # # these following optionals can be genereated by the pipeline 
+            # # when it is run in full but can also be passed in 
+            # trained_vision_model_path: Optional[Path] = None
+            # graph_dir: Optional[Path] = None
+            # gcn_path: Optional[Path] = None
         )
-        eval = Eval(config)
-        # logger.info(eval.get_gcn_path())
-        # reps = eval.get_vision_class_representatives()
-        # logger.info(len(reps))
-        # logger.info(type(reps))
-        # logger.info(type(reps[0]))
-        # logger.info(reps[0][0].shape)
-        # logger.info('=======')
-        # logger.info(reps[0][1])
-        eval.eval()
-
-
-
-    logger.info(f"-------- Training Classifier -------")
-    # checkpoint_path = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier', '*.pt')))[0])
-    classifier_checkpoint_path = train_mnist_classifier()
-
-    logger.info(f"-------- Generating GCN Training Data -------")
-    generate_graph(checkpoint_path=classifier_checkpoint_path)
-
-    # full sweep
-    topK_array = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000]
-    kappa_array = list(range(100, 7000 + 1, 1000))
-
-    # partial sweep to save time
-    topK_array = [8000]
-    kappa_array = [7000]
-
-    experiments = list(product(topK_array, kappa_array))
-
-    i = 0
-    for topK, kappa in experiments:
-        i += 1
-        logger.info(
-            f"------- Starting exp {i} of {len(experiments)} | top-{topK} kappa-{kappa}  ------"
-        )
-        gcn_checkpoint_path = train_gcn(classifier_checkpoint_path, topK=topK)
-        metrics = evaluation(
-            gcn_path=gcn_checkpoint_path,
-            classifier_path=classifier_checkpoint_path,
-            topK=topK,
-            kappa=kappa,
-        )
-        logger.info(f"------- Completed top-{topK} kappa-{kappa} experiment ------")
-
-    viz()
-    logger.info(f"-------- Experiment Complete -------")
-
+        pipeline = Pipeline(config)
+        metrics_dict_array = pipeline.run()
 
 if __name__ == "__main__":
     main()

@@ -354,11 +354,11 @@ class GCNTrainerConfig:
     # since GCN trainer will assemble the remaining path as <neural net name>_<dataset name>
     gcn_dataset_dir: Path = Path("datasets/Graphs")
 
-    device = global_config["device"]
+    device: str = global_config["device"]
     mask_layer: Union[None, int] = -2
-    steps = global_config["gcn_train_steps"]
-    lr = 0.01
-    weight_decay = 5e-4
+    steps: int = global_config["gcn_train_steps"]
+    lr:float = 0.01
+    weight_decay: float = 5e-4
     mask_K: Union[int, Percentage] = 2_500
     logging_steps: int = 2
     gcn_checkpoint_path: Path = Path("checkpoints/gcn")
