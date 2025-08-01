@@ -200,7 +200,7 @@ class MIMU_mnist(UnlearningDataset):
 
 
 class MIMU_cifar10(UnlearningDataset):
-    def __init__(self, forget_class=9, batch_size=64, dataset_path="datasets") -> None:
+    def __init__(self, forget_class=0, batch_size=64, dataset_path="datasets") -> None:
         super().__init__(
             dataset_name=SupportedDatasets.CIFAR10.value,
             forget_class=forget_class,
@@ -266,7 +266,7 @@ class MIMU_cifar10(UnlearningDataset):
 
 
 class MIMU_cifar100(UnlearningDataset):
-    def __init__(self, forget_class=9, batch_size=64, dataset_path="datasets"):
+    def __init__(self, forget_class=0, batch_size=64, dataset_path="datasets"):
         super().__init__(
             dataset_name=SupportedDatasets.CIFAR100.value,
             forget_class=forget_class,

@@ -3,7 +3,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Optional
 
 import matplotlib.pyplot as plt
 import torch
@@ -19,62 +19,106 @@ from data import GraphGenerator
 from model import HookedMNISTClassifier, MaskingGCN
 from trainer import gumbel_top_k_sampling_v2
 
+from utils_data import SupportedDatasets, get_unlearning_dataset
+from model import SupportedVisionModels, vision_model_loader
+from datetime import datetime
+from glob import glob
+
 global_config = OmegaConf.load("configs/config.yaml")
 
 
 @dataclass
 class EvalConfig:
-    gcn_path: (
-        Path  # =  Path(sorted(glob.glob(os.path.join('checkpoints/gcn/', '*.pt')))[0])
-    )
-    classifier_path: Path  # = Path(sorted(glob.glob(os.path.join('checkpoints/mnist_classifier/', '*.pt')))[0])
-    data_path: Path = Path("datasets")
-    graph_data_path: Path = Path("eval/Graphs")
-    metrics_path: Path = Path("eval/Metrics and Plots")
-    forget_digit: int = 9
-    batch_size: int = 256
-    device: str = global_config["device"]
+
+    # vision model
+    vision_model: SupportedVisionModels
+    vision_model_path: Path
+
+    # dataset
+    vision_dataset: SupportedVisionModels
+
+    # gcn model
+    gcn_path: Optional[Path] = None
+
+    # unlearning hyperparameters
+    forget_class: int = 0
     mask_layer = -2
     topK: int = 7000
     kappa: int = 5000
-    plot_category_probabilities: bool = True
     use_set_difference_masking_strategy: bool = False
+
+    # subfolder will be created to suit model / dataset
+    gcn_base_path: Path = Path('checkpoints/gcn/')
+    graph_data_base_path: Path = Path("eval/Graphs")
+    metrics_base_path: Path = Path("eval/Metrics and Plots")
+
+    batch_size: int = 256
+    device: str = global_config["device"]
+
+    # plotting
+    draw_eval_plots: bool = True
+    plot_category_probabilities: bool = True
 
 
 class Eval:
-    def __init__(self, config: EvalConfig, draw_eval_plots: bool = True):
+    def __init__(self, config: EvalConfig):
+
         self.config = config
-        self.gcn = self.load_gcn()
-        self.classifier = self.load_classifier()
-        self.graph_generator = self.load_graph_generator()
-        self.draw_eval_plots = draw_eval_plots
+        self.draw_eval_plots = config.draw_eval_plots
         self.use_set_difference_masking_strategy = (
             config.use_set_difference_masking_strategy
         )
+
+        self.classifier = vision_model_loader(
+            model_type=config.vision_model, 
+            dataset=config.vision_dataset,
+            load_pretrained_from_path=config.vision_model_path
+        )
+
+        self.gcn = self.load_gcn()
+        self.dataset = get_unlearning_dataset(dataset=config.vision_dataset, batch_size=config.batch_size, forget_class=config.forget_class)
+
+        self.graph_generator = self.load_graph_generator()
+
         # sft unlearning baseline
-        self.finetuning_unlearning_model = self.train_sft_model()
+        # self.finetuning_unlearning_model = self.train_sft_model()
+
+    def get_model_graph_date_str(self, include_date: bool = False) -> str:
+        if include_date:
+            return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}'
+        else:
+            return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}' 
+
+
+    def get_gcn_path(self) -> Path:
+        if self.config.gcn_path is not None:
+            return self.config.gcn_path
+        else:
+            logger.info('No GCN path given, guessing ...')
+            pattern = self.config.gcn_base_path / f'GCN_{self.get_model_graph_date_str()}'
+            return sorted(glob(str(pattern)))[-1]
+
+    def get_graph_data_dir(self) -> Path:
+        # Path("eval/Graphs")
+        path = self.config.graph_data_base_path / self.get_model_graph_date_str(include_date=True)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def load_graph_generator(self) -> GraphGenerator:
         return GraphGenerator(
-            model=self.classifier,
-            graph_dataset_dir=self.config.graph_data_path,
+            vision_model_type=self.config.vision_model,
+            unlearning_dataset=self.config.vision_dataset,
+            checkpoint_path=self.config.vision_model_path,
             process_save_batch_size=1,  # we want per-sample grad
-            forget_digit=self.config.forget_digit,
-            mask_layer=self.config.mask_layer,
-            device=self.config.device,
+            forget_class=self.config.forget_class,
             save_redundant_features=False,
         )
 
     def load_gcn(self) -> MaskingGCN:
         model = MaskingGCN()
-        model.load_state_dict(torch.load(self.config.gcn_path))
+        model.load_state_dict(torch.load(self.get_gcn_path()))
         return model
 
-    def load_classifier(self) -> HookedMNISTClassifier:
-        model = HookedMNISTClassifier()
-        model = torch.compile(model)
-        model.load_state_dict(torch.load(self.config.classifier_path))
-        return model
 
     def mnist_class_representatives(self) -> List[Tuple[Tensor, Tensor]]:
         dataset = MNIST(
