@@ -21,6 +21,7 @@ from tqdm import tqdm
 from data import GCNBatch
 from model import (HookedMLPClassifier, HookedModel, MaskingGCN,
                    SupportedVisionModels, vision_model_loader)
+from sampler import DifferentiableTopK, GumbelSampler
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
@@ -357,11 +358,12 @@ class GCNTrainerConfig:
     device: str = global_config["device"]
     mask_layer: Union[None, int] = -2
     steps: int = global_config["gcn_train_steps"]
-    lr:float = 0.01
+    lr: float = 0.01
     weight_decay: float = 5e-4
     mask_K: Union[int, Percentage] = 2_500
     logging_steps: int = 2
     gcn_checkpoint_path: Path = Path("checkpoints/gcn")
+    use_sinkhorn_sampler: bool = True
 
 
 class GCNTrainer:
@@ -386,6 +388,11 @@ class GCNTrainer:
         )  # or the number of parameters in the target layer for masking
 
         self.vision_model_layer_dims = self.get_model_signature()
+
+        if config.use_sinkhorn_sampler:
+            self.sampler = DifferentiableTopK(k=self.config.mask_K).to(config.device)
+        else:
+            self.sampler = GumbelSampler(k=self.config.mask_K).to(config.device)
 
         if (
             config.vision_model_architecture
@@ -548,9 +555,7 @@ class GCNTrainer:
                 emperical_Q_logits: Tensor = self.gcn(
                     x=feature_batch[i], edge_index=edge_matrix
                 )
-                mask = gumbel_top_k_sampling_v2(logits=emperical_Q_logits, k=self.K).to(
-                    self.device
-                )
+                mask = self.sampler(emperical_Q_logits)
 
                 # # delete the next line
                 # mask = F.softmax(emperical_Q_logits, dim=-1)
@@ -656,45 +661,6 @@ class GCNTrainer:
             return f"{model_name}_{dataset_name}"
 
         return main_dir / f"GCN_{model_name}_{dataset_name}_{datetime_run_id}.pt"
-
-
-def gumbel_top_k_sampling_v2(logits, k, temperature=1.0, eps=1e-10) -> Tensor:
-    """
-    Alternative implementation using continuous relaxation of top-k operation.
-    This version maintains better gradients by avoiding hard masking.
-
-    The code for this method is shared by Wuga, see
-    https://claude.ai/public/artifacts/138b83ce-f40f-495f-81a7-bc8bd7416fce
-
-    See Also
-    [1] https://arxiv.org/pdf/1903.06059
-    [2] https://papers.nips.cc/paper_files/paper/2014/file/937debc749f041eb5700df7211ac795c-Paper.pdf
-    [3] https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.gumbel_softmax.html
-
-    Args:
-        logits (torch.Tensor): Input logits of shape (..., vocab_size)
-        k (int): Number of top elements to sample
-        temperature (float): Temperature parameter
-        eps (float): Small constant for numerical stability
-
-    Returns:
-        torch.Tensor: Soft top-k samples
-    """
-    # Sample Gumbel noise
-    gumbel_noise = -torch.log(-torch.log(torch.rand_like(logits) + eps) + eps)
-    gumbel_logits = logits + gumbel_noise
-
-    # Use continuous relaxation of top-k
-    # Sort the gumbel logits to find the k-th largest value
-    sorted_gumbel, _ = torch.sort(gumbel_logits, dim=-1, descending=True)
-    threshold = sorted_gumbel[..., k - 1 : k]  # k-th largest value
-
-    # Create soft mask using sigmoid
-    soft_mask = torch.sigmoid((gumbel_logits - threshold) / temperature)
-
-    # Apply soft mask and normalize
-    masked_logits = logits * soft_mask
-    return F.softmax(masked_logits / temperature, dim=-1)
 
 
 class SFTModes(Enum):

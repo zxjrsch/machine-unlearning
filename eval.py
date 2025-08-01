@@ -2,8 +2,10 @@ import copy
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from glob import glob
 from pathlib import Path
-from typing import Dict, List, Tuple, Union, Optional
+from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import torch
@@ -11,18 +13,14 @@ import torch.nn.functional as F
 from loguru import logger
 from omegaconf import OmegaConf
 from torch import Tensor, nn
-from torch.utils.data import DataLoader, Subset
-from torchvision.datasets import MNIST
-from torchvision.transforms import ToTensor
+from torch.utils.data import DataLoader
 
 from data import GraphGenerator
-from model import HookedMLPClassifier, MaskingGCN
-from trainer import gumbel_top_k_sampling_v2, SFTConfig, SFTTrainer, SFTModes
-
-from utils_data import SupportedDatasets, get_unlearning_dataset, get_vision_dataset_classes
-from model import SupportedVisionModels, vision_model_loader
-from datetime import datetime
-from glob import glob
+from model import MaskingGCN, SupportedVisionModels, vision_model_loader
+from sampler import DifferentiableTopK, GumbelSampler
+from trainer import SFTConfig, SFTModes, SFTTrainer
+from utils_data import (SupportedDatasets, get_unlearning_dataset,
+                        get_vision_dataset_classes)
 
 global_config = OmegaConf.load("configs/config.yaml")
 
@@ -47,12 +45,14 @@ class EvalConfig:
     kappa: int = 5000
     use_set_difference_masking_strategy: bool = False
 
+    use_sinkhorn_sampler: bool = True
+
     # select finetuning options
     sft_steps: int = 50
     sft_mode: SFTModes = SFTModes.Randomize_Forget
 
     # subfolder will be created to suit model / dataset
-    gcn_base_path: Path = Path('checkpoints/gcn/')
+    gcn_base_path: Path = Path("checkpoints/gcn/")
     graph_data_base_path: Path = Path("eval/Graphs")
     metrics_base_path: Path = Path("eval/Metrics and Plots")
 
@@ -74,15 +74,24 @@ class Eval:
         )
 
         self.classifier = vision_model_loader(
-            model_type=config.vision_model, 
+            model_type=config.vision_model,
             dataset=config.vision_dataset,
-            load_pretrained_from_path=config.vision_model_path
+            load_pretrained_from_path=config.vision_model_path,
         )
 
         self.gcn = self.load_gcn()
-        self.dataset = get_unlearning_dataset(dataset=config.vision_dataset, batch_size=config.batch_size, forget_class=config.forget_class)
+        self.dataset = get_unlearning_dataset(
+            dataset=config.vision_dataset,
+            batch_size=config.batch_size,
+            forget_class=config.forget_class,
+        )
 
         self.graph_generator = self.load_graph_generator()
+
+        if config.use_sinkhorn_sampler:
+            self.sampler = DifferentiableTopK(k=self.config.topK).to(config.device)
+        else:
+            self.sampler = GumbelSampler(k=self.config.topK).to(config.device)
 
         # sft unlearning baseline
         self.finetuned_unlearning_model = self.train_sft_model()
@@ -91,39 +100,50 @@ class Eval:
         if include_date:
             return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}'
         else:
-            return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}' 
-        
+            return (
+                f"{self.config.vision_model.value}_{self.config.vision_dataset.value}"
+            )
+
     def get_metric_save_dir(self) -> str:
-        p = self.config.metrics_base_path / f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}'
+        p = (
+            self.config.metrics_base_path
+            / f"{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}"
+        )
         p.mkdir(parents=True, exist_ok=True)
         return p
-    
+
     def get_raw_json_metric_save_dir(self) -> str:
-        p = self.config.metrics_base_path / f'json/{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}'
+        p = (
+            self.config.metrics_base_path
+            / f"json/{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}"
+        )
         p.mkdir(parents=True, exist_ok=True)
         return p
-    
+
     def get_metrics_filename_prefix_str(self, include_date: bool = False) -> str:
         if include_date:
             return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}_{datetime.now().strftime("%d_%H_%M")}'
         else:
-            return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}'
-
+            return f"{self.config.vision_model.value}_{self.config.vision_dataset.value}_top-{self.config.topK}_kappa_{self.config.kappa}"
 
     def get_gcn_path(self) -> Path:
         if self.config.gcn_path is not None:
             return self.config.gcn_path
         else:
-            logger.info('No GCN path given, guessing ...')
-            pattern = self.config.gcn_base_path / f'GCN_{self.get_model_graph_date_str()}/*.pt'
+            logger.info("No GCN path given, guessing ...")
+            pattern = (
+                self.config.gcn_base_path
+                / f"GCN_{self.get_model_graph_date_str()}/*.pt"
+            )
             return sorted(glob(str(pattern)))[-1]
 
     def get_graph_data_dir(self) -> Path:
         # Path("eval/Graphs")
-        path = self.config.graph_data_base_path / self.get_model_graph_date_str(include_date=True)
+        path = self.config.graph_data_base_path / self.get_model_graph_date_str(
+            include_date=True
+        )
         path.mkdir(parents=True, exist_ok=True)
         return path
-    
 
     def load_graph_generator(self) -> GraphGenerator:
         return GraphGenerator(
@@ -139,7 +159,6 @@ class Eval:
         model = MaskingGCN()
         model.load_state_dict(torch.load(self.get_gcn_path()))
         return model
-
 
     def get_vision_class_representatives(self) -> List[Tuple[Tensor, Tensor]]:
         old_batch_size = self.dataset.batch_size
@@ -182,9 +201,7 @@ class Eval:
                 Q_logits: Tensor = self.gcn(x=features, edge_index=edge_matrix)
 
                 if perform_sampling:
-                    mask = gumbel_top_k_sampling_v2(
-                        logits=Q_logits, k=self.config.topK, temperature=1, eps=1e-10
-                    )
+                    mask = self.sampler(Q_logits)
                 else:
                     topK_indices = Q_logits.topk(k=self.config.topK).indices
                     mask = torch.zeros_like(Q_logits, dtype=torch.float)
@@ -275,9 +292,7 @@ class Eval:
         mask[topK_indices] = 1
         return self.get_masked_model(custom_mask=mask)
 
-    def get_masked_model(
-        self, custom_mask: Union[Tensor, None] = None
-    ) -> nn.Module:
+    def get_masked_model(self, custom_mask: Union[Tensor, None] = None) -> nn.Module:
         """Single layer masking."""
         if custom_mask is None:
             mask: Tensor = self.get_model_mask()
@@ -301,7 +316,11 @@ class Eval:
         key = list(state_dict.keys())[self.config.mask_layer]
         state_dict[key] = layer_matrix
 
-        model: nn.Module = vision_model_loader(model_type=self.config.vision_model, dataset=self.config.vision_dataset, eval_mode=True)
+        model: nn.Module = vision_model_loader(
+            model_type=self.config.vision_model,
+            dataset=self.config.vision_dataset,
+            eval_mode=True,
+        )
         model.load_state_dict(state_dict)
         return model
 
@@ -368,9 +387,14 @@ class Eval:
                     plt.figure(figsize=(10, 6))
                     plt.bar(range(10), probs, tick_label=[str(i) for i in range(10)])
 
-                    save_path: Path = self.get_metric_save_dir() / f"probabilities/{description}/"
+                    save_path: Path = (
+                        self.get_metric_save_dir() / f"probabilities/{description}/"
+                    )
                     save_path.mkdir(parents=True, exist_ok=True)
-                    save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
+                    save_path = (
+                        save_path
+                        / f"{self.get_metrics_filename_prefix_str(include_date=True)}.png"
+                    )
 
                     plt.xlabel("Class")
                     plt.ylabel("Probability")
@@ -436,7 +460,9 @@ class Eval:
         plt.tight_layout()
         save_path: Path = self.get_metric_save_dir() / f"metrics"
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
+        save_path = (
+            save_path / f"{self.get_metrics_filename_prefix_str(include_date=True)}.png"
+        )
 
         plt.savefig(save_path)
         plt.close()
@@ -478,10 +504,13 @@ class Eval:
         fig.supxlabel("Classes", fontsize=14)
         fig.supylabel("Classifier Probability", fontsize=14)
 
-
-        save_path: Path = self.get_metric_save_dir() / f"probabilities_all_classes/{description}/"
+        save_path: Path = (
+            self.get_metric_save_dir() / f"probabilities_all_classes/{description}/"
+        )
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
+        save_path = (
+            save_path / f"{self.get_metrics_filename_prefix_str(include_date=True)}.png"
+        )
 
         plt.savefig(save_path)
         plt.close()
@@ -503,9 +532,14 @@ class Eval:
         plt.ylabel("Frequency")
         plt.title(f"{model_name} parameter frequency (layer: {self.config.mask_layer})")
 
-        save_path: Path = self.get_metric_save_dir() / f"probabilities_all_classes/weight_histograms/{model_name}/"
+        save_path: Path = (
+            self.get_metric_save_dir()
+            / f"probabilities_all_classes/weight_histograms/{model_name}/"
+        )
         save_path.mkdir(parents=True, exist_ok=True)
-        save_path = save_path / f'{self.get_metrics_filename_prefix_str(include_date=True)}.png'
+        save_path = (
+            save_path / f"{self.get_metrics_filename_prefix_str(include_date=True)}.png"
+        )
 
         plt.savefig(save_path)
         plt.close()
@@ -759,8 +793,8 @@ class Eval:
             "mask_efficacy_metrics": mask_efficacy_metrics,
         }
         if save_metrics:
-            
-            file_path: Path = self.get_raw_json_metric_save_dir() 
+
+            file_path: Path = self.get_raw_json_metric_save_dir()
 
             if self.use_set_difference_masking_strategy:
                 file_path = file_path / f"top-{self.config.topK}.json"
@@ -778,22 +812,28 @@ class Eval:
 
 if __name__ == "__main__":
     from itertools import product
-    model_architectures = [SupportedVisionModels.HookedMLPClassifier, SupportedVisionModels.HookedResnet]
+
+    model_architectures = [
+        SupportedVisionModels.HookedMLPClassifier,
+        SupportedVisionModels.HookedResnet,
+    ]
     supported_datasets = [
-        # SupportedDatasets.MNIST, 
-        SupportedDatasets.CIFAR10, 
-        # SupportedDatasets.CIFAR100, 
-        # SupportedDatasets.SVHN, 
-        # SupportedDatasets.IMAGENET_SMALL, 
-        # SupportedDatasets.PLANT_CLASSIFICATION, 
+        # SupportedDatasets.MNIST,
+        SupportedDatasets.CIFAR10,
+        # SupportedDatasets.CIFAR100,
+        # SupportedDatasets.SVHN,
+        # SupportedDatasets.IMAGENET_SMALL,
+        # SupportedDatasets.PLANT_CLASSIFICATION,
         # SupportedDatasets.POKEMON_CLASSIFICATION
     ]
-    for (ma, ds)  in product(model_architectures, supported_datasets):
+    for ma, ds in product(model_architectures, supported_datasets):
 
         config = EvalConfig(
             vision_model=ma,
-            vision_model_path=sorted(glob(f'checkpoints/{ma.value}_{ds.value}/*.pt'))[-1],
-            vision_dataset=ds
+            vision_model_path=sorted(glob(f"checkpoints/{ma.value}_{ds.value}/*.pt"))[
+                -1
+            ],
+            vision_dataset=ds,
         )
         eval = Eval(config)
         # logger.info(eval.get_gcn_path())
@@ -805,4 +845,3 @@ if __name__ == "__main__":
         # logger.info('=======')
         # logger.info(reps[0][1])
         eval.eval()
-

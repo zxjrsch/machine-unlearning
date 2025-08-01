@@ -52,10 +52,9 @@ class UnlearningDataset(ABC):
 
     def get_forget_set(self, is_train: bool = True) -> DataLoader:
         return self.get_single_class(class_id=self.forget_class, is_train=is_train)
-    
-    def reset_batch_size(self, new_batch_size: int = 1)  -> None:
-        self.batch_size = new_batch_size
 
+    def reset_batch_size(self, new_batch_size: int = 1) -> None:
+        self.batch_size = new_batch_size
 
 
 def get_unlearning_dataset(
