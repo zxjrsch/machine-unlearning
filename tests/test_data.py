@@ -26,7 +26,7 @@ def test_graph_generator():
 
 
         a = perf_counter()
-        generator.save_forward_backward_features()
+        generator.genereate_graphs()
         b = perf_counter()
         logger.info(f'Generating graph data for {ma.value} on {ds.value} took {round(b-a)} seconds.')
 

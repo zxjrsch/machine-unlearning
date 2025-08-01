@@ -430,7 +430,7 @@ class GraphGenerator(ModelInspector):
 
         return in_features_vector, out_features_vector
 
-    def save_forward_backward_features(self) -> None:
+    def genereate_graphs(self) -> Path:
         """Saves grads and activations."""
         assert (
             self.data_loader
@@ -521,6 +521,7 @@ class GraphGenerator(ModelInspector):
             del feature_batch, input_batch, target_batch
             self.model.reset_activations()
             torch.cuda.empty_cache()
+        return self.graph_dataset_dir
 
     def mean_var_nomralize(self, feature_vector: Tensor) -> Tensor:
         return (feature_vector - feature_vector.mean()) / (feature_vector.std() + 1e-8)
@@ -632,6 +633,6 @@ if __name__ == "__main__":
             unlearning_dataset=SupportedDatasets.MNIST,
             checkpoint_path=resnet_files[0],
         )
-        generator.save_forward_backward_features()
+        generator.genereate_graphs()
     else:
         raise AssertionError(f"No resnet foundin {checkpoint_dir}")

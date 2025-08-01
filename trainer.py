@@ -174,7 +174,7 @@ class VisionModelTrainer:
                 device=config.device,
             )
 
-    def train(self) -> Path:
+    def train(self, log_completion: bool = False) -> Path:
         """Returns checkpoint path."""
         try:
             torch.set_float32_matmul_precision("high")
@@ -238,10 +238,11 @@ class VisionModelTrainer:
                     self.model.train()
 
         checkpoint_path: Path = self.checkpoint()
-        logger.info(
-            f"{self.config.architecture.value} checkpoints saved to {checkpoint_path}"
-        )
-        logger.info(f"{self.config.architecture.value} training complete.")
+        if log_completion:
+            logger.info(
+                f"{self.config.architecture.value} checkpoints saved to {checkpoint_path}"
+            )
+            logger.info(f"{self.config.architecture.value} training complete.")
         return checkpoint_path
 
     @torch.no_grad()
@@ -277,7 +278,7 @@ class VisionModelTrainer:
             f"Test loss {round(test_loss, 5)} | Score {round(100 * accuracy, 1)} %"
         )
 
-    def get_save_dir(self) -> str:
+    def get_save_dir(self) -> Path:
 
         if type(self.config.checkpoint_dir) is str:
             self.config.checkpoint_dir = Path(self.config.checkpoint_dir)
@@ -506,7 +507,7 @@ class GCNTrainer:
         probs = probs.to(self.device)
         return Categorical(probs=probs)
 
-    def train(self, plot_stats: bool = True) -> None:
+    def train(self, plot_stats: bool = True) -> Path:
         adam_optimizer = torch.optim.AdamW(
             self.gcn.parameters(),
             lr=self.config.lr,
@@ -637,7 +638,7 @@ class GCNTrainer:
         torch.save(self.gcn.state_dict(), checkpoint_path)
         return checkpoint_path
 
-    def get_save_path(self, return_dir: bool = False) -> str:
+    def get_save_path(self, return_dir: bool = False) -> Path:
 
         if type(self.config.gcn_checkpoint_path) is str:
             self.config.gcn_checkpoint_path = Path(self.config.gcn_checkpoint_path)

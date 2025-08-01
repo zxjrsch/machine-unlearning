@@ -36,7 +36,7 @@ def generate_graph(checkpoint_path):
     # logger.info(data)
 
     # this saves data in batches
-    dg.save_forward_backward_features()
+    dg.genereate_graphs()
 
 
 def train_gcn(src_checkpoint, topK=2500):
