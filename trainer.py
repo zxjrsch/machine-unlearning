@@ -712,10 +712,10 @@ class GCNTrainer:
 
                 if self.config.gcn_prior_distribution == GCNPriorDistribution.GRADIENT:
                     # batch size is 1 (per-sample graph data)
-                    grad_vect = x[0, :, -1].squeeze()
-                    logger.info(
-                        f"===== Target shape {target.shape} | Grad vector shape {grad_vect.shape} ====="
-                    )
+                    grad_vect = feature_batch[i][:, -1].squeeze()
+                    # logger.info(
+                    #     f"===== Feature matrix shape {feature_batch[i].shape} | Grad vector shape {grad_vect.shape} ====="
+                    # )
                     prob = F.normalize(torch.abs(torch.abs(grad_vect)), p=2, dim=0)
                     self.prior_distribution = self.get_prior_distribution(
                         custom_probs=prob
