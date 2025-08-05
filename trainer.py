@@ -509,7 +509,7 @@ class GCNTrainerConfig:
     logging_steps: int = 2
     gcn_checkpoint_path: Path = Path("checkpoints/gcn")
     use_sinkhorn_sampler: bool = True
-    prior_distribution: GCNPriorDistribution = GCNPriorDistribution.WEIGHT
+    gcn_prior_distribution: GCNPriorDistribution = GCNPriorDistribution.WEIGHT
 
 
 class GCNTrainer:
@@ -551,9 +551,9 @@ class GCNTrainer:
             self.vision_model_layer_shapes = None
 
         self.device = self.config.device
-        if self.config.prior_distribution == GCNPriorDistribution.WEIGHT:
+        if self.config.gcn_prior_distribution == GCNPriorDistribution.WEIGHT:
             self.prior_distribution = self.get_prior_distribution()
-        elif self.config.prior_distribution == GCNPriorDistribution.GRADIENT:
+        elif self.config.gcn_prior_distribution == GCNPriorDistribution.GRADIENT:
             # this is initialized in train with gradients passed in from dataloader
             self.prior_distribution = None
         else:
@@ -709,6 +709,17 @@ class GCNTrainer:
             for i in range(batch_size):
                 # logger.info(f'step{i}')
                 x, target = input_batch[i].unsqueeze(0), target_batch[i]
+
+                if self.config.gcn_prior_distribution == GCNPriorDistribution.GRADIENT:
+                    # batch size is 1 (per-sample graph data)
+                    grad_vect = x[0, :, -1].squeeze()
+                    logger.info(
+                        f"===== Target shape {target.shape} | Grad vector shape {grad_vect.shape} ====="
+                    )
+                    prob = F.normalize(torch.abs(torch.abs(grad_vect)), p=2, dim=0)
+                    self.prior_distribution = self.get_prior_distribution(
+                        custom_probs=prob
+                    )
 
                 emperical_Q_logits: Tensor = self.gcn(
                     x=feature_batch[i], edge_index=edge_matrix

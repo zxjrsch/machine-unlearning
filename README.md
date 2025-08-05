@@ -1,5 +1,108 @@
 # MIMU 
 
+
+### Current Experiments 
+
+The current pipeline allows us to compute the following 5 metrics for unlearning and model performance in our MIMU method plus 3 additional baselines (SFT randomization, random masking, default). 
+
+1. Cross entropy loss of classifier under forget set (measures unlearning)
+2. Cross entropy loss of classifier under retain set (measures utility degradation)
+3. Probability of classifying forget class averaged over a batch (measures unlearning)
+4. Score (percent correct classification) under forget set (measures unlearning)
+5. Score under retain set (measures utility degradation)
+
+> [!NOTE] 
+> Raw metrics are generated as `json` files saved at `eval/Metrics and Plots/json/<model>_<dataset}_top-{K}_kappa_{kappa}/*.json`.
+
+The main object of our experiments is the `Pipeline` class that abstracts away all the details:
+
+```python
+# main.py
+
+config = PipelineConfig(...)
+pipeline = Pipeline(config)
+pipeline.run()
+```
+
+An underneath the hood view of pipeline execution is as follows 
+
+```
+┌─────────────────┐
+│    Pipeline     │
+└─────────┬───────┘
+          │
+          ▼
+┌─────────────────────────────┐
+│  run_vision_model_training  │◄──── SupportedVisionModels
+└─────────┬───────────────────┘      Vision Dataset
+          │                          
+          │    ┌─────────────────────────────┐
+          └───►│  VisionModelTrainer         │
+               └─────────┬───────────────────┘
+                         │
+                         ▼
+                    ┌─────────┐
+                    │ use_ddp?│
+                    └────┬────┘
+                    Yes  │  No
+                  ┌──────┴──────┐
+                  ▼             ▼
+            ┌──────────┐  ┌──────────┐
+            │train_ddp │  │  train   │
+            └─────┬────┘  └─────┬────┘
+                  │             │
+                  └─────┬───────┘
+                        ▼
+      ┌─────────────────────────────────┐
+      │  run_gcn_graph_generation       │
+      └─────────┬───────────────────────┘
+                │
+                │    ┌─────────────────┐
+                └───►│ GraphGenerator  │
+                     └─────────┬───────┘
+                               │
+                               ▼
+                ┌─────────────────────────────┐
+                │    run_gcn_training         │◄──── GCNPriorDistribution
+                └─────────┬───────────────────┘      Graph Dataset
+                          │
+                          │    ┌─────────────────┐
+                          └───►│ GCNTrainer      │
+                               └─────────┬───────┘
+                                         │
+                                         ▼
+                       ┌─────────────────────────────────┐
+                       │ run_single_evaluation_round     │◄──── SFTModes
+                       └─────────┬───────────────────────┘      Checkpoint Files
+                                 │
+                                 │    ┌─────────────────┐
+                                 └───►│       Eval      │
+                                      └─────────┬───────┘
+                                                ▼
+        ┌─────────────────────────────────────────────────────┐
+        │                     eval                            │
+        │  ┌─────────────────────────────────────────────┐    │
+        │  │        topK_list × kappa_list               │    │
+        │  └─────────────────┬───────────────────────────┘    │
+        │                    │                                │
+        │                    ▼                                │
+        │          ┌─────────────────┐                        │
+        │     ┌───►│ More combos?    │                        │
+        │     │    └─────────┬───────┘                        │
+        │     │         Yes  │  No                            │
+        │     └──────────────┘  │                             │
+        │                       ▼                             │
+        └───────────────────────────────────────────────────┐ │
+                                                            │ │
+                                                            ▼ ▼
+                                                  ┌─────────────────┐
+                                                  │ Results:        │
+                                                  │ List[Dict]      │
+                                                  └─────────────────┘
+```
+
+
+
 ### Project structure 
 
 ```
@@ -19,6 +122,7 @@ mimu/
 ```
 
 ### Artifacts 
+
 ```
 mimu/
 ├── reports/        # plots
@@ -28,47 +132,9 @@ mimu/
 ├── observability/  # training stats
 ```
 
-### How to run 
-
-```bash
-uv run main.py
-
-# run in background and save log and returns pid 
-nohup uv run main.py > experiment-all-0-parallel.log  2>&1 &
-
-# use ray, change RAY_TMPDIR to your working dir
-RAY_TMPDIR=/home/claire/mimu nohup uv run --directory /home/claire/mimu main.py > experiment-all-7-parallel.log 2>&1 &
-```
-
-> [!TIP]
-> Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. Example command 
-
-```bash
-clear && bash clean.sh && uv run main.py 
-```
-
-Save output to file 
-
-```bash 
-nohup bash -c "clear && bash clean.sh && uv run main.py" > output.log 2>&1 &
-```
-
-### Possible Errors and Quick Fixes 
-
-0. Some unit tests depend on artifacts to be genereated, for example GCN graph generation depends on vision model to be trained.
-Some unit tests may contain outdated file naming convention or hardcoded paths. Be sure to update as necessary before running the tests.
-
-1. If you run into cpu process errors, try reducing default number of workers for data loaders in `utils_data.py`
-
-2. If you run into batch size mis-matches, set `is_train=True` in your retain or forget dataloader, since
-validation set may not have enough datapoints for your specified batch, as was seen in SFT.
-
-3. If you run into path errors while leveraging distributed training, this might be due to the framework automatically 
-changing directory to a `temp` dir. The current codebase handles by default, including by telling the framework to init 
-at the current working directory as opposed to `temp`. But future developments may break this.
-
-
 ### Supported Models and Datasets
+
+We current support 2 models x 7 datasets
 
 ```python
 # model.py
@@ -106,15 +172,51 @@ To unzip ImageNet-small you can run
 for f in *.tar.gz; do d="${f%.tar.gz}"; mkdir "$d" && tar -xzf "$f" -C "$d"; done
 ```
 
-### Metrics 
+### How to run 
 
-1. Cross entropy loss of classifier under forget set (measures unlearning)
-2. Cross entropy loss of classifier under retain set (measures utility degradation)
-3. Probability of classifying forget class averaged over a batch (measures unlearning)
-4. Score (percent correct classification) under forget set (measures unlearning)
-5. Score under retain set (measures utility degradation)
+```bash
+uv run main.py
 
-Raw metrics are generated as `json` files saved at `eval/Metrics and Plots/metrics/` and visualizations are plotted at `reports/`.
+# run in background and save log and returns pid 
+nohup uv run main.py > experiment-all-0-parallel.log  2>&1 &
+```
+
+> [!TIP]
+> Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. Example command 
+
+```bash
+clear && bash clean.sh && uv run main.py 
+```
+
+Save output to file 
+
+```bash 
+nohup bash -c "clear && bash clean.sh && uv run main.py" > output.log 2>&1 &
+```
+
+### Possible Errors and Quick Fixes 
+
+0. Some unit tests depend on artifacts to be genereated, for example GCN graph generation depends on vision model to be trained.
+Some unit tests may contain outdated file naming convention or hardcoded paths. Be sure to update as necessary before running the tests.
+
+1. If you run into cpu process errors, try reducing default number of workers for data loaders in `utils_data.py`
+
+2. If you run into batch size mis-matches, set `is_train=True` in your retain or forget dataloader, since
+validation set may not have enough datapoints for your specified batch, as was seen in SFT.
+
+3. If you run into path errors while leveraging distributed training, this might be due to the framework automatically 
+changing directory to a `temp` dir. The current codebase handles by default, including by telling the framework to init 
+at the current working directory as opposed to `temp`. But future developments may break this.
+
+4. Graphing is done differently with more dataset / model combinations.
+
+### Adding models 
+
+Define your hooked vision model with gradient getting hooks and model loader, see example in `model.py`.
+
+### Adding Datasets
+
+Define new dataset in `utils_data.py` and specialized unlearning dataloding class.
 
 
 ### Adding Baselines
@@ -191,6 +293,8 @@ class Reporter:
 
 
 ```
+
+
 
 ### Dev
 
