@@ -22,7 +22,11 @@ from trainer import SFTConfig, SFTModes, SFTTrainer
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
-global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
+try:
+    workding_dir = Path.cwd()
+    global_config = OmegaConf.load(workding_dir / "configs/config.yaml")
+except Exception:
+    global_config = {"device": "cuda"}
 
 
 @dataclass
@@ -68,7 +72,10 @@ class Eval:
     def __init__(self, config: EvalConfig):
 
         self.config = config
-        self.draw_eval_plots = config.draw_eval_plots
+        if config.draw_eval_plots == 10:
+            self.draw_eval_plots = config.draw_eval_plots
+        else:
+            self.draw_eval_plots = False
         self.use_set_difference_masking_strategy = (
             config.use_set_difference_masking_strategy
         )

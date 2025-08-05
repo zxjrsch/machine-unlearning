@@ -3,6 +3,7 @@ import glob
 import math
 import os
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -27,10 +28,11 @@ from sampler import DifferentiableTopK, GumbelSampler
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
-# context = ray.init()
-# logger.info(f"dashboard_url: {context.dashboard_url}")
-
-global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
+try:
+    workding_dir = Path.cwd()
+    global_config = OmegaConf.load(workding_dir / "configs/config.yaml")
+except Exception:
+    global_config = {"device": "cuda", "gcn_train_steps": 130}
 
 
 class VisionModelTrainerStatistics:
@@ -162,6 +164,7 @@ class VisionModelTrainerConfig:
     steps: Optional[int] = 1  # steps per epoch; set to 1 for quick run / debugging
     lr: float = 1e-3
     device: str = global_config["device"]
+    num_workers: int = 2
 
 
 class VisionModelTrainer:
@@ -180,6 +183,7 @@ class VisionModelTrainer:
                 val_interval_size=config.logging_steps,
                 device=config.device,
             )
+        self.runid = str(uuid.uuid1())
 
     def train(self, log_completion: bool = False) -> Path:
         """Returns checkpoint path."""
@@ -341,8 +345,10 @@ class VisionModelTrainer:
         #     logger.info(f"{self.config.architecture.value} training complete.")
         # return checkpoint_path
 
-    def train_ddp(self, num_workers=2) -> Path:
-        scaling_config = ray.train.ScalingConfig(num_workers=num_workers, use_gpu=True)
+    def train_ddp(self) -> Path:
+        scaling_config = ray.train.ScalingConfig(
+            num_workers=self.config.num_workers, use_gpu=True
+        )
         trainer = ray.train.torch.TorchTrainer(
             self.ddp_training_loop,
             scaling_config=scaling_config,
@@ -358,6 +364,7 @@ class VisionModelTrainer:
 
         #     self.model.load_state_dict(model_state_dict)
         with result.checkpoint.as_directory() as checkpoint_dir:
+            logger.info(f"checkpoint dir {checkpoint_dir}")
             path = os.path.join(checkpoint_dir, "model.pt")
             model_state_dict = torch.load(path)
 
@@ -415,7 +422,9 @@ class VisionModelTrainer:
 
         dataset_name = self.config.vision_dataset.value
         model_name = self.config.architecture.value
-        main_dir: Path = self.config.checkpoint_dir / f"{model_name}_{dataset_name}"
+        main_dir: Path = (
+            self.config.checkpoint_dir / f"{model_name}_{dataset_name}_{self.runid}"
+        )
         main_dir.mkdir(exist_ok=True, parents=True)
 
         datetime_run_id = datetime.now().strftime("%d_%H_%M")
@@ -476,6 +485,11 @@ class GCNTrainerStatistics(TypedDict):
     loss_term_3: List[float] = []
 
 
+class GCNPriorDistribution(Enum):
+    WEIGHT = "WEIGHT"
+    GRADIENT = "GRADIENT"
+
+
 @dataclass
 class GCNTrainerConfig:
     vision_model_architecture: SupportedVisionModels
@@ -495,6 +509,7 @@ class GCNTrainerConfig:
     logging_steps: int = 2
     gcn_checkpoint_path: Path = Path("checkpoints/gcn")
     use_sinkhorn_sampler: bool = True
+    prior_distribution: GCNPriorDistribution = GCNPriorDistribution.WEIGHT
 
 
 class GCNTrainer:
@@ -536,7 +551,13 @@ class GCNTrainer:
             self.vision_model_layer_shapes = None
 
         self.device = self.config.device
-        self.prior_distribution = self.get_prior_distribution()
+        if self.config.prior_distribution == GCNPriorDistribution.WEIGHT:
+            self.prior_distribution = self.get_prior_distribution()
+        elif self.config.prior_distribution == GCNPriorDistribution.GRADIENT:
+            # this is initialized in train with gradients passed in from dataloader
+            self.prior_distribution = None
+        else:
+            raise AssertionError("Unknown GCN prior distribution")
 
         if isinstance(config.mask_K, int):
             assert config.mask_K > 0
@@ -635,15 +656,21 @@ class GCNTrainer:
             return self.mask_full_model(mask).eval()
         return self.mask_single_layer(mask).eval()
 
-    def get_prior_distribution(self) -> Categorical:
-        assert self.weight_vector is not None
-        weight_vector = self.weight_vector.detach().clone()
-        assert not weight_vector.requires_grad
-        probs = torch.abs(weight_vector) / torch.linalg.vector_norm(
-            weight_vector, ord=1
-        )
-        probs = probs.to(self.device)
-        return Categorical(probs=probs)
+    def get_prior_distribution(
+        self, custom_probs: Optional[Tensor] = None
+    ) -> Categorical:
+        if custom_probs is not None:
+            custom_probs: Tensor = custom_probs.to(self.device)
+            return Categorical(probs=custom_probs)
+        else:
+            assert self.weight_vector is not None
+            weight_vector = self.weight_vector.detach().clone()
+            assert not weight_vector.requires_grad
+            probs = torch.abs(weight_vector) / torch.linalg.vector_norm(
+                weight_vector, ord=1
+            )
+            probs = probs.to(self.device)
+            return Categorical(probs=probs)
 
     def train(self, plot_stats: bool = True) -> Path:
         adam_optimizer = torch.optim.AdamW(
@@ -876,9 +903,10 @@ class SFTTrainer:
         assert sum([1 for layer in model.parameters() if layer.requires_grad]) == 1
         return model
 
-    def get_random_targets(self) -> Tensor:
-        batch_size = self.config.batch_size
-        return self.sampling_distribution.sample((batch_size,))
+    def get_random_targets(self, size: int) -> Tensor:
+        # to handle dataloders that does have drop_last=False
+        # batch_size = self.config.batch_size
+        return self.sampling_distribution.sample((size,))
 
     def finetune_randomize_forget(self) -> nn.Module:
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
@@ -893,7 +921,9 @@ class SFTTrainer:
                 break
             step += 1
             inputs: Tensor = inputs.to(self.config.device)
-            target = self.get_random_targets().to(self.config.device)
+            # to handle dataloders that does have drop_last=False
+            vbsize = inputs.size(0)  # possibly variable batch size
+            target = self.get_random_targets(size=vbsize).to(self.config.device)
 
             preds = self.model(inputs)
             train_loss: Tensor = loss_fn(preds, target)
@@ -944,7 +974,7 @@ class SFTTrainer:
         )
         return self.model
 
-    def finetune(self, save_checkpoint: bool = True) -> Union[Path, nn.Module]:
+    def finetune(self, save_checkpoint: bool = True) -> Union[nn.Module]:
         if self.config.finetuning_mode == SFTModes.Randomize_Forget:
             self.model = self.finetune_randomize_forget()
         elif self.config.finetuning_mode == SFTModes.Finetune_Retain:

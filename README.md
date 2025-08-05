@@ -33,14 +33,15 @@ mimu/
 ```bash
 uv run main.py
 
-# run in background and save log and returns pid like 368413, 370494
-nohup uv run main.py > experiment-all-4-parallel.log  2>&1 & # 390669
+# run in background and save log and returns pid 
+nohup uv run main.py > experiment-all-0-parallel.log  2>&1 &
 
 # use ray, change RAY_TMPDIR to your working dir
-RAY_TMPDIR=/home/claire/mimu nohup uv run --directory /home/claire/mimu main.py > experiment-all-4-parallel.log 2>&1 &
+RAY_TMPDIR=/home/claire/mimu nohup uv run --directory /home/claire/mimu main.py > experiment-all-7-parallel.log 2>&1 &
 ```
 
-Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. Example command 
+> [!TIP]
+> Highly recommended: clear artifacts before new runs to avoid data clashes, see `clean.sh`. Example command 
 
 ```bash
 clear && bash clean.sh && uv run main.py 
@@ -54,10 +55,17 @@ nohup bash -c "clear && bash clean.sh && uv run main.py" > output.log 2>&1 &
 
 ### Possible Errors and Quick Fixes 
 
+0. Some unit tests depend on artifacts to be genereated, for example GCN graph generation depends on vision model to be trained.
+Some unit tests may contain outdated file naming convention or hardcoded paths. Be sure to update as necessary before running the tests.
+
 1. If you run into cpu process errors, try reducing default number of workers for data loaders in `utils_data.py`
 
 2. If you run into batch size mis-matches, set `is_train=True` in your retain or forget dataloader, since
 validation set may not have enough datapoints for your specified batch, as was seen in SFT.
+
+3. If you run into path errors while leveraging distributed training, this might be due to the framework automatically 
+changing directory to a `temp` dir. The current codebase handles by default, including by telling the framework to init 
+at the current working directory as opposed to `temp`. But future developments may break this.
 
 
 ### Supported Models and Datasets

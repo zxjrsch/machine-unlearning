@@ -14,8 +14,9 @@ from torchvision.transforms import Compose, Normalize, Resize, ToTensor
 from datasets import load_dataset
 from imagenet_classes import IMAGENET2012_CLASSES
 
-turn_on_download = False
-absolute_path = "/home/claire/mimu/datasets"
+turn_on_download = True
+workding_dir = Path.cwd()
+absolute_path = workding_dir / "datasets"
 
 
 class SupportedDatasets(Enum):

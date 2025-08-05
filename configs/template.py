@@ -1,7 +1,13 @@
+from pathlib import Path
+
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
+try:
+    workding_dir = Path.cwd()
+    global_config = OmegaConf.load(workding_dir / "configs/config.yaml")
+except Exception:
+    global_config = {"device": "cuda"}
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")

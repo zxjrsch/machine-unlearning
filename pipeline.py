@@ -22,10 +22,13 @@ class PipelineConfig:
     vision_model_batch_size: int
     vision_model_learning_rate: float  # 1e-3
     device: str
+    use_distributed_training: bool  # True
+    num_workers: int  # 2 [gpus]
     forget_class: int  # 0
     graph_dataset_size: int  # 1024
     graph_batch_size: int  # 64
     use_sinkhorn_sampler: bool  # True
+    gcn_prior_distribution: GCNPriorDistribution  # GCNPriorDistribution.WEIGHT
     gcn_train_steps: int  # 130
     gcn_learning_rate: float  # 1e-2
     gcn_logging_steps: int  # 10
@@ -70,11 +73,15 @@ class Pipeline:
             steps=self.cfg.vision_model_max_steps_per_epoch,
             lr=self.cfg.vision_model_learning_rate,
             device=self.cfg.device,
+            num_workers=self.cfg.num_workers,
         )
 
         trainer = VisionModelTrainer(config)
         a = perf_counter()
-        path = trainer.train_ddp()
+        if self.cfg.use_distributed_training:
+            path = trainer.train_ddp()
+        else:
+            path = trainer.train()
         b = perf_counter()
 
         logger.info(
@@ -137,6 +144,7 @@ class Pipeline:
             device=self.cfg.device,
             mask_layer=-2,
             use_sinkhorn_sampler=self.cfg.use_sinkhorn_sampler,
+            gcn_prior_distribution=self.cfg.gcn_prior_distribution,
             steps=self.cfg.gcn_train_steps,
             lr=self.cfg.gcn_learning_rate,
             weight_decay=5e-4,

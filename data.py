@@ -17,7 +17,11 @@ from model import (Activations, HookedModel, SupportedVisionModels,
 from utils_data import (SupportedDatasets, UnlearningDataset,
                         get_unlearning_dataset)
 
-global_config = OmegaConf.load("/home/claire/mimu/configs/config.yaml")
+try:
+    workding_dir = Path.cwd()
+    global_config = OmegaConf.load(workding_dir / "configs/config.yaml")
+except Exception:
+    global_config = {"device": "cuda"}
 
 
 class ModelInspector:
