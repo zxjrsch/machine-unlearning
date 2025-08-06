@@ -1,0 +1,21 @@
+import altair as alt
+from vega_datasets import data
+
+# Test new visualization library
+
+source = data.cars()
+
+line = alt.Chart(source).mark_line().encode(
+    x='Year',
+    y='mean(Miles_per_Gallon)'
+)
+
+band = alt.Chart(source).mark_errorband(extent='ci').encode(
+    x='Year',
+    y=alt.Y('Miles_per_Gallon').title('Miles/Gallon'),
+)
+
+chart = band + line
+
+chart.save('test.pdf')
+
