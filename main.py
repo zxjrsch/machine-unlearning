@@ -38,12 +38,12 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=2,
+            vision_model_epochs=10,
             vision_model_max_steps_per_epoch=2,  # adjust to something larger, like 256
             vision_model_logging_steps=1,
             vision_model_batch_size=64,
             vision_model_learning_rate=1e-3,
-            use_distributed_training=True,
+            use_distributed_training=False,
             num_workers=2,  # num gpus,
             device=global_config["device"],
             forget_class=0,

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/Minimally_Invasive_Machine_Unlearning.png" alt="CodonTransformer Logo" width="100%" height="100%" style="vertical-align: middle;"/>
+  <img src="./assets/Minimally_Invasive_Machine_Unlearning.png" alt="MIMU Logo" width="100%" height="100%" style="vertical-align: middle;"/>
 </p>
 
 <p align="center">
@@ -307,6 +307,11 @@ class Reporter:
 
 ```bash
 uv run pre-commit run --all-files
+```
+
+```bash
+# vision model training tracking 
+trackio show
 ```
 
 ```bash

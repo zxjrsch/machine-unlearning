@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import ray.train.torch
 import torch
 import torch.nn.functional as F
+import trackio as wandb
 from loguru import logger
 from omegaconf import OmegaConf
 from torch import Tensor, nn
@@ -185,6 +186,15 @@ class VisionModelTrainer:
             )
         self.runid = str(uuid.uuid1())
 
+        wandb.init(
+            project=f"{config.architecture.value}_{config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}",
+            config={
+                "epochs": config.epochs,
+                "learning_rate": config.lr,
+                "batch_size": config.batch_size,
+            },
+        )
+
     def train(self, log_completion: bool = False) -> Path:
         """Returns checkpoint path."""
         try:
@@ -232,6 +242,13 @@ class VisionModelTrainer:
                 adam_optimizer.zero_grad()
 
                 throughput.append(self.config.batch_size / (time.perf_counter() - t))
+                wandb.log(
+                    {
+                        "epoch": epoch,
+                        "train_loss": train_loss.item(),
+                        "grad_norm": self.statistics.get_grad_norm(self.model),
+                    }
+                )
 
                 if (1 + step) % self.config.logging_steps == 0:
                     average_throughput = int(sum(throughput) / len(throughput))
@@ -247,7 +264,7 @@ class VisionModelTrainer:
                     )
                     self.statistics.plot()
                     self.model.train()
-
+        wandb.finish()
         checkpoint_path: Path = self.checkpoint()
         if log_completion:
             logger.info(
