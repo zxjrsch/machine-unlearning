@@ -1,5 +1,11 @@
-# MIMU 
+<p align="center">
+  <img src="./assets/Minimally_Invasive_Machine_Unlearning.png" alt="CodonTransformer Logo" width="100%" height="100%" style="vertical-align: middle;"/>
+</p>
 
+<p align="center">
+    <a href="https://github.com/layer6ai-labs/MIMU" target="_blank"><img src="https://img.shields.io/badge/GitHub-Code-4A90E2?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://deepwiki.com/zxjrsch/mimu"><img src="https://img.shields.io/badge/Deep Wiki-Online-00B89E?style=for-the-badge&logo=internet-explorer&logoColor=white" alt="Deep Wiki"></a>
+</p>
 
 ### Current Experiments 
 
@@ -219,6 +225,7 @@ Define your hooked vision model with gradient getting hooks and model loader, se
 Define new dataset in `utils_data.py` and specialized unlearning dataloding class.
 
 
+## How To Contribute 
 ### Adding Baselines
 
 Experiments can be added to `eval.py` and outcomes plotted using `reporter.py`. Use `main.py` to launch your experiments.
@@ -296,7 +303,7 @@ class Reporter:
 
 
 
-### Dev
+### Dev Tools
 
 ```bash
 uv run pre-commit run --all-files
