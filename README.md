@@ -18,7 +18,7 @@ The current pipeline allows us to compute the following 5 metrics for unlearning
 5. Score under retain set (measures utility degradation)
 
 > [!NOTE] 
-> Raw metrics are generated as `json` files saved at `eval/Metrics and Plots/json/<model>_<dataset}_top-{K}_kappa_{kappa}/*.json`.
+> Raw metrics are generated as `json` files saved at `eval/Metrics and Plots/json/<model>_<dataset>_top-{K}_kappa_{kappa}/*.json`.
 
 The main object of our experiments is the `Pipeline` class that abstracts away all the details:
 

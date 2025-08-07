@@ -4,13 +4,15 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Union
 
 import matplotlib.pyplot as plt
 from utils_data import SupportedDatasets
 from model import SupportedVisionModels
 from loguru import logger
 from itertools import product
+from tabulate import tabulate
+
 
 @dataclass
 class xData:
@@ -20,9 +22,9 @@ class xData:
 
 @dataclass
 class ReporterConfig:
-    metrics_dir: Path = Path("json")
+    metrics_dir: Path = Path("eval/Metrics and Plots/json")
     report_dir: Path = Path("reports")
-    x_axis_data: str = xData.kappa
+    # x_axis_data: str = xData.kappa
 
 
 class Reporter:
@@ -30,14 +32,7 @@ class Reporter:
         logger.info(f'>>> Current plotting works for fixed topK, variable kappa <<<')
         self.config = config
         self.reports_base_path = Path(config.report_dir)
-        self.sort_fn = lambda x: (
-            int(re.search(r"kappa-(\d+)\.json", x).group(1))
-            if xData.kappa
-            else lambda x: int(re.search(r"top-(\d+)\.json", x).group(1))
-        )
-        self.metrics_paths = sorted(
-            glob(os.path.join(self.config.metrics_dir, "*.json")), key=self.sort_fn
-        )
+        self.metrics_paths = None # set later by experiment plotting method
 
         # --------------- init by get_topK_array
         self.mask_layer = None
@@ -71,8 +66,11 @@ class Reporter:
         paths = glob(os.path.join(self.config.metrics_dir, search_pattern))
 
         def characteristic_fn(p: str) -> bool:
-            # example string: json/HookedResnet_MNIST_top-8000_kappa_2000/
-            experiment_string = p.split('/')[1]
+            # example string: eval/Metrics and Plots/json/HookedResnet_MNIST_top-8000_kappa_2000/
+            if is_folder:
+                experiment_string = p.split('/')[-1]
+            else: 
+                experiment_string = p.split('/')[-2]
             model, ds = experiment_string.split('_')[:2]
             # logger.info(f'{model}, {ds}')
             return model == vision_model.value and ds == vision_dataset.value
@@ -492,7 +490,91 @@ class Reporter:
             self.plot_single_experiment_set(vision_model=ma, vision_dataset=ds)
             c += 1
 
+@dataclass
+class LaTeXTableGeneratorConfig:
+    metrics_dir: Path = Path("eval/Metrics and Plots/json")
+    output_dir: Path = Path("tables/")
 
+class LaTeXTableGenerator:
+
+    """NOTE: this class depends on the json schema, this class requires update if the schema changes."""
+
+    def __init__(self, config: LaTeXTableGeneratorConfig) -> None:
+        self.cfg = config
+
+    def get_metrics_dict(self, vision_model: SupportedVisionModels, vision_dataset: SupportedVisionModels, topK: int, kappa: int) -> Union[Dict, int]:
+        if isinstance(self.cfg.metrics_dir, str):
+            self.cfg.metrics_dir = Path(self.cfg.metrics_dir)
+            # assumes standard naming convention for experiment json outputs base_dir/<model>_<dataset>_top-<k>-kappa_<kappa>
+        path = self.cfg.metrics_dir / f'{vision_model.value}_{vision_dataset.value}_top-{topK}_kappa_{kappa}'
+        path /= f'top-{topK}-kappa-{kappa}.json'
+        if not path.exists():
+            logger.info(f'@@@ No file found at {path}')
+            return -1
+        else:
+            with open(path, 'r') as f:
+                try:
+                    metrics =  json.loads(f.readline().strip())
+                    return metrics
+                except Exception:
+                    logger.info(f'@@@ Json file corrupt: {path}')
+                    return -2
+
+
+    def generate_tables(self, topK: int=8000, kappa: int = 7000):
+        model_architectures = [
+            SupportedVisionModels.HookedMLPClassifier,
+            SupportedVisionModels.HookedResnet,
+        ]
+        supported_datasets = [
+            SupportedDatasets.SVHN,
+            SupportedDatasets.CIFAR100,
+            SupportedDatasets.POKEMON_CLASSIFICATION,
+            SupportedDatasets.MNIST,
+            SupportedDatasets.CIFAR10,
+            SupportedDatasets.IMAGENET_SMALL,
+            SupportedDatasets.PLANT_CLASSIFICATION,
+        ]
+        c = 1
+        num_success = 0
+        non_existent_files = []
+        corrupted_json_files = []
+
+        for ds, ma in product(supported_datasets, model_architectures):
+            logger.info(
+                f"Generating data tables for {c} for {ma.value} on {ds.value}"
+            )
+            metrics = self.get_metrics_dict(vision_model=ma, vision_dataset=ds, topK=topK, kappa=kappa)
+            c += 1
+            if metrics == -1:
+                path = f'{str(self.cfg.metrics_dir)}/{ma.value}_{ds.value}_top-{topK}_kappa_{kappa}/top-{topK}-kappa-{kappa}.json'
+                non_existent_files.append([path])  
+            elif metrics == -2:
+                path = f'{str(self.cfg.metrics_dir)}/{ma.value}_{ds.value}_top-{topK}_kappa_{kappa}/top-{topK}-kappa-{kappa}.json'
+                corrupted_json_files.append([path])                               
+            else:
+                num_success += 1
+
+                # --------- genereate table for forget set (i.e. unlearning metrics) --------
+                forget_metrics = metrics['unlearning_metrics']
+
+                # --------- genereate table for retain set (i.e. utilty degradation metrics)  --------
+                retain_metrics = metrics['performance_degradation_metrics']
+
+
+                logger.info(metrics)
+
+        # summarize
+        logger.info(f'Generated {num_success} / {len(list(product(supported_datasets, model_architectures)))} plots.')
+        if len(corrupted_json_files) > 0:
+            logger.info(f'{len(corrupted_json_files)} corrupted json files, ensure json is in first line')
+            t = tabulate(tabular_data=corrupted_json_files, headers=['Corrupted Json Files'])
+            logger.info(t)
+        if len(non_existent_files) > 0:
+            logger.info(f'{len(non_existent_files)} non existent files')
+            t = tabulate(tabular_data=non_existent_files, headers=['Non-existent Files'])
+            logger.info(t)
+        
 if __name__ == "__main__":
     config = ReporterConfig()
     reporter = Reporter(config)
