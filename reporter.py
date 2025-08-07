@@ -12,6 +12,7 @@ from model import SupportedVisionModels
 from loguru import logger
 from itertools import product
 from tabulate import tabulate
+import pandas as pd
 
 
 @dataclass
@@ -490,6 +491,23 @@ class Reporter:
             self.plot_single_experiment_set(vision_model=ma, vision_dataset=ds)
             c += 1
 
+
+# used for LaTeX table generation
+SimplifiedModelNames ={
+    SupportedVisionModels.HookedMLPClassifier: 'MLP',
+    SupportedVisionModels.HookedResnet: 'ResNet',
+}
+
+SimplifiedDatasetNames = {
+    SupportedDatasets.CIFAR10: 'CIFAR-10',
+    SupportedDatasets.CIFAR100: 'CIFAR-100',
+    SupportedDatasets.MNIST: 'MNIST',
+    SupportedDatasets.IMAGENET_SMALL: 'ImageNet',
+    SupportedDatasets.SVHN: 'SVHN',
+    SupportedDatasets.PLANT_CLASSIFICATION: 'Plants',
+    SupportedDatasets.POKEMON_CLASSIFICATION: 'Pokemon'
+}
+
 @dataclass
 class LaTeXTableGeneratorConfig:
     metrics_dir: Path = Path("eval/Metrics and Plots/json")
@@ -502,10 +520,16 @@ class LaTeXTableGenerator:
     def __init__(self, config: LaTeXTableGeneratorConfig) -> None:
         self.cfg = config
 
-    def get_metrics_dict(self, vision_model: SupportedVisionModels, vision_dataset: SupportedVisionModels, topK: int, kappa: int) -> Union[Dict, int]:
         if isinstance(self.cfg.metrics_dir, str):
             self.cfg.metrics_dir = Path(self.cfg.metrics_dir)
-            # assumes standard naming convention for experiment json outputs base_dir/<model>_<dataset>_top-<k>-kappa_<kappa>
+        if isinstance(self.cfg.output_dir, str):
+            self.cfg.output_dir = Path(self.cfg.output_dir)
+        
+        self.cfg.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def get_metrics_dict(self, vision_model: SupportedVisionModels, vision_dataset: SupportedVisionModels, topK: int, kappa: int) -> Union[Dict, int]:
+
+        # assumes standard naming convention for experiment json outputs base_dir/<model>_<dataset>_top-<k>-kappa_<kappa>
         path = self.cfg.metrics_dir / f'{vision_model.value}_{vision_dataset.value}_top-{topK}_kappa_{kappa}'
         path /= f'top-{topK}-kappa-{kappa}.json'
         if not path.exists():
@@ -521,7 +545,7 @@ class LaTeXTableGenerator:
                     return -2
 
 
-    def generate_tables(self, topK: int=8000, kappa: int = 7000):
+    def generate_tables(self, topK: int=8000, kappa: int = 7000, genereate_csv = False):
         model_architectures = [
             SupportedVisionModels.HookedMLPClassifier,
             SupportedVisionModels.HookedResnet,
@@ -540,6 +564,14 @@ class LaTeXTableGenerator:
         non_existent_files = []
         corrupted_json_files = []
 
+        # ----- tables to genereate -----
+        retain_set_loss_table = []
+        retain_set_score_table = []
+
+        forget_set_loss_table = []
+        forget_set_score_table = []
+
+
         for ds, ma in product(supported_datasets, model_architectures):
             logger.info(
                 f"Generating data tables for {c} for {ma.value} on {ds.value}"
@@ -554,15 +586,98 @@ class LaTeXTableGenerator:
                 corrupted_json_files.append([path])                               
             else:
                 num_success += 1
-
-                # --------- genereate table for forget set (i.e. unlearning metrics) --------
                 forget_metrics = metrics['unlearning_metrics']
-
-                # --------- genereate table for retain set (i.e. utilty degradation metrics)  --------
                 retain_metrics = metrics['performance_degradation_metrics']
 
+                # --- add to forget set loss table ---
+                row_forget_loss = {
+                    'Model': SimplifiedModelNames[ma],
+                    'Dataset': SimplifiedDatasetNames[ds],
+                    'MIMU': forget_metrics['after_masking_loss'],
+                    'SFT': forget_metrics['sft_baseline_loss'],
+                    'Random': forget_metrics['random_masking_loss'],
+                    'Original': forget_metrics['before_masking_loss'],
+                    # more baselines can be added below
+                }
+                forget_set_loss_table.append(row_forget_loss)
 
-                logger.info(metrics)
+                # --- add to forget set score table ---
+                row_forget_score = {
+                    'Model': SimplifiedModelNames[ma],
+                    'Dataset': SimplifiedDatasetNames[ds],
+                    'MIMU': forget_metrics['after_masking_score'],
+                    'SFT': forget_metrics['sft_baseline_score'],
+                    'Random': forget_metrics['random_masking_score'],
+                    'Original': forget_metrics['before_masking_score'],
+                    # more baselines can be added below
+                }
+                forget_set_score_table.append(row_forget_score)
+            
+
+                # --- add to retain set loss table ---
+                row_retain_loss = {
+                    'Model': SimplifiedModelNames[ma],
+                    'Dataset': SimplifiedDatasetNames[ds],
+                    'MIMU': retain_metrics['after_masking_loss'],
+                    'SFT': retain_metrics['sft_baseline_loss'],
+                    'Random': retain_metrics['random_masking_loss'],
+                    'Original': retain_metrics['before_masking_loss'],
+                    # more baselines can be added below
+                }
+                retain_set_loss_table.append(row_retain_loss)
+
+                # --- add to retain set score table ---
+                row_retain_score = {
+                    'Model': SimplifiedModelNames[ma],
+                    'Dataset': SimplifiedDatasetNames[ds],
+                    'MIMU': retain_metrics['after_masking_score'],
+                    'SFT': retain_metrics['sft_baseline_score'],
+                    'Random': retain_metrics['random_masking_score'],
+                    'Original': retain_metrics['before_masking_score'],
+                    # more baselines can be added below
+                }
+                retain_set_score_table.append(row_retain_score)
+                
+
+
+                # logger.info(metrics)
+
+
+        # --------- genereate table for forget set (i.e. unlearning metrics) --------
+        forget_set_loss_df = pd.DataFrame(forget_set_loss_table)
+        forget_set_score_df = pd.DataFrame(forget_set_score_table).reset_index()
+        # --------- genereate table for retain set (i.e. utilty degradation metrics)  --------
+        retain_set_loss_df = pd.DataFrame(retain_set_loss_table).reset_index()
+        retain_set_score_df = pd.DataFrame(retain_set_score_table).reset_index()
+
+        if genereate_csv:
+            # save as csv 
+            forget_set_loss_df.to_csv(self.cfg.output_dir /'forget_set_loss_df.csv', index=False)
+            forget_set_score_df.to_csv(self.cfg.output_dir /'forget_set_score_df.csv', index=False)
+
+            retain_set_loss_df.to_csv(self.cfg.output_dir /'retain_set_loss_df.csv', index=False)
+            retain_set_score_df.to_csv(self.cfg.output_dir /'retain_set_score_df.csv', index=False)
+
+        # save as latex 
+        def save_latex(df: pd.DataFrame, file_name, caption):
+            cols = ['MIMU', 'SFT', 'Random', 'Original']
+            # Apply the formatter only to the subset of numeric columns
+            df.style.format(
+                '{:.3f}', 
+                subset=cols
+            ).hide(
+                axis='index'
+            ).to_latex(
+                self.cfg.output_dir / f'{file_name}.tex', 
+                caption=caption,
+            )
+
+        save_latex(df=forget_set_loss_df, file_name='forget_loss', caption=f'Unlearning performance as forget set loss when (TopK, $\kappa$) is ({topK}, {kappa}).')
+        save_latex(df=forget_set_score_df, file_name='forget_score', caption=f'Unlearning performance as forget set accuracy when (TopK, $\kappa$) is ({topK}, {kappa}).')
+        save_latex(df=retain_set_loss_df, file_name='retain_loss', caption=f'Model degradation measured as retain set loss when (TopK, $\kappa$) is ({topK}, {kappa}).')
+        save_latex(df=retain_set_score_df, file_name='retain_score', caption=f'Model degradation measured as retain set accuracy when (TopK, $\kappa$) is ({topK}, {kappa}).')
+
+
 
         # summarize
         logger.info(f'Generated {num_success} / {len(list(product(supported_datasets, model_architectures)))} plots.')
