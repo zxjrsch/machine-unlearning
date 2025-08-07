@@ -1,4 +1,5 @@
-from reporter import * 
+from reporter import *
+
 
 def test_table():
     config = LaTeXTableGeneratorConfig()

@@ -7,6 +7,7 @@ from omegaconf import OmegaConf
 import ray
 from model import SupportedDatasets, SupportedVisionModels
 from pipeline import Pipeline, PipelineConfig
+from reporter import *
 from trainer import GCNPriorDistribution
 
 
@@ -67,8 +68,27 @@ def main():
             # gcn_path: Optional[Path] = None
         )
         pipeline = Pipeline(config)
-        pipeline.run()
+        try:
+            pipeline.run()
+        except Exception as e:
+            logger.info(f"Error encountered for {ma.value} on {ds.value}")
+            logger.info(e)
+
+
+def plot():
+    # assume frozen topK
+    config = ReporterConfig()
+    reporter = Reporter(config)
+    reporter.plot()
+
+
+def genereate_tables(topK=8000, kappa=7000):
+    config = LaTeXTableGeneratorConfig()
+    table_generator = LaTeXTableGenerator(config)
+    table_generator.generate_tables(topK=topK, kappa=kappa, genereate_csv=False)
 
 
 if __name__ == "__main__":
     main()
+    plot()
+    genereate_tables(topK=8000, kappa=7000)
