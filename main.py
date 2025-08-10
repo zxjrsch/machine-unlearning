@@ -50,7 +50,7 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=1,
+            vision_model_epochs=2,
             vision_model_max_steps_per_epoch=1024
             * 16,  # adjust to something larger, like 256
             vision_model_logging_steps=1024,
@@ -65,7 +65,7 @@ def main():
             graph_dataset_dir=Path.cwd() / "graphs",
             gcn_checkpoint_dir=Path.cwd() / "gcn_checkpoints",
             graph_batch_size=64,
-            use_sinkhorn_sampler=False,
+            use_sinkhorn_sampler=True,
             use_set_difference_masking_strategy=False,
             gcn_prior_distribution=GCNPriorDistribution.WEIGHT,
             gcn_train_steps=10,  # adjust to something larger, like 130

@@ -26,6 +26,7 @@ import ray
 from data import GCNBatch
 from model import (HookedMLPClassifier, HookedModel, MaskingGCN,
                    SupportedVisionModels, vision_model_loader)
+from reporter import SimplifiedDatasetNames, SimplifiedModelNames
 from sampler import DifferentiableTopK, GumbelSampler
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
@@ -43,6 +44,7 @@ class VisionModelTrainerStatistics:
         vision_model_architecture: SupportedVisionModels,
         vision_dataset: SupportedDatasets,
         val_interval_size: int,
+        run_id: Optional[str] = None,
         working_dir: Path = Path.cwd(),
         device: str = global_config["device"],
     ):
@@ -52,7 +54,7 @@ class VisionModelTrainerStatistics:
         self.test_loss = []
         self.test_score = []
         self.gradient_norm = []
-        self.id = datetime.now().strftime("%d_%H_%M")
+        self.id = datetime.now().strftime("%d_%H_%M") if run_id is None else run_id
         self.working_dir = working_dir / "observability"
         self.save_dir = self.get_save_dir()
         self.device = device
@@ -62,7 +64,7 @@ class VisionModelTrainerStatistics:
         """Observability folder is used for single GPU training and not used for parallel training."""
         dir = (
             self.working_dir
-            / f"{self.vision_model_architecture.value}_{self.vision_dataset.value}_{self.id}"
+            / f"{SimplifiedModelNames[self.vision_model_architecture]}_{SimplifiedDatasetNames[self.vision_dataset]}_{self.id}"
         )
         dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"VisionModelTrainerStatistics dif {dir}")
@@ -102,6 +104,9 @@ class VisionModelTrainerStatistics:
             for _ in self.test_loss[1:]:
                 z.append(z[-1] + self.val_interval_size)
             plt.plot(z, self.test_loss, label="test loss")
+            logger.info(
+                f"VisionModelTrainerStatistics recorded {len(x)} train loss and {len(z)} test loss"
+            )
 
         plt.xlabel("step")
         plt.ylabel("loss")
@@ -183,6 +188,7 @@ class VisionModelTrainer:
         self.validation_dataloader = get_unlearning_dataset(
             dataset=config.vision_dataset, batch_size=config.batch_size
         ).get_val_loader()
+        self.runid = str(uuid.uuid1())
         if config.plot_statistics:
             self.statistics = VisionModelTrainerStatistics(
                 vision_model_architecture=config.architecture,
@@ -190,8 +196,8 @@ class VisionModelTrainer:
                 val_interval_size=config.logging_steps,
                 device=config.device,
                 working_dir=config.working_dir,
+                run_id=f'{self.runid[:3]}_{datetime.now().strftime("%d_%H_%M")}',
             )
-        self.runid = str(uuid.uuid1())
 
     def ddp_training_loop(self, log_completion: bool = False):
         """Returns checkpoint path."""
@@ -252,16 +258,7 @@ class VisionModelTrainer:
 
                 preds = self.model(input)
                 train_loss: Tensor = criterion(preds, target)
-
                 train_loss.backward()
-                total_norm = 0.0
-                for p in self.model.parameters():
-                    if p.grad is not None:
-                        param_norm = p.grad.data.norm(2)
-                        total_norm += param_norm.item() ** 2
-                total_norm = total_norm ** (1.0 / 2)
-
-                grad_norm = total_norm
                 adam_optimizer.step()
 
                 c += 1
@@ -271,11 +268,11 @@ class VisionModelTrainer:
 
                 # logger.info(f'loss {train_loss.item()} at step {c} from worker {ray.train.get_context().get_world_rank()}')
 
-                if self.config.plot_statistics:
-                    metrics["grad_norm"] = self.statistics.get_grad_norm(self.model)
-                    grad_norm: float = self.statistics.get_grad_norm(self.model)
-                    self.statistics.record_grad_norm(grad_norm)
-                    self.statistics.record_train_loss(train_loss.item())
+                # if self.config.plot_statistics and ray.train.get_context().get_world_rank() == 0:
+                #     metrics["grad_norm"] = self.statistics.get_grad_norm(self.model)
+                #     grad_norm: float = self.statistics.get_grad_norm(self.model)
+                #     self.statistics.record_grad_norm(grad_norm)
+                #     self.statistics.record_train_loss(train_loss.item())
 
                 throughput = self.config.batch_size / (time.perf_counter() - t)
 
@@ -289,7 +286,7 @@ class VisionModelTrainer:
                         {
                             "train_loss": train_loss.item(),
                             "train_accuracy": accuracy,
-                            "grad_norm": grad_norm,
+                            "grad_norm": self.statistics.get_grad_norm(self.model),
                             "throughput": throughput,
                             "batch size": self.config.batch_size,
                             "learning rate": self.config.lr,
@@ -339,7 +336,15 @@ class VisionModelTrainer:
                         self.statistics.plot()
                     # self.model.train()
 
+            # end of dataloader
             if ray.train.get_context().get_world_rank() == 0:
+
+                # if self.config.plot_statistics:
+                #     metrics["grad_norm"] = self.statistics.get_grad_norm(self.model)
+                #     grad_norm: float = self.statistics.get_grad_norm(self.model)
+                #     self.statistics.record_grad_norm(grad_norm)
+                #     self.statistics.record_train_loss(train_loss.item())
+
                 logger.info(f"Completed epoch after {step} steps, evaluating.")
                 #         # Save model state dict to 'model.pt' inside save_dir
                 save_dir = self.get_save_dir(include_suffix=False)
@@ -636,6 +641,7 @@ class GCNTrainerStatistics(TypedDict):
     loss_term_1: List[float] = []
     loss_term_2: List[float] = []
     loss_term_3: List[float] = []
+    loss: List[float] = []
 
 
 class GCNPriorDistribution(Enum):
@@ -826,6 +832,23 @@ class GCNTrainer:
             return Categorical(probs=probs)
 
     def train(self, plot_stats: bool = True) -> Path:
+        # vision_checkpoints/HookedResnet_CIFAR100_e63/model.pt
+        tag = str(self.config.vision_model_path).split("/")[-2]
+        model_tag, data_tag, run_tag = tag.split("_")
+        sampler = "sinkhorn" if self.config.use_sinkhorn_sampler else "gumbel"
+
+        wandb.init(
+            project=f"GCN_{self.config.vision_model_architecture.value}_{self.config.vision_dataset.value}_{sampler}_{model_tag}_{data_tag}",
+            config={
+                "mask_K": self.config.mask_K,
+                "total steps": self.config.steps,
+                "learning_rate": self.config.lr,
+                "weight_decay": self.config.weight_decay,
+                "use_sinkhorm": self.config.use_sinkhorn_sampler,
+            },
+            name=tag,
+        )
+
         adam_optimizer = torch.optim.AdamW(
             self.gcn.parameters(),
             lr=self.config.lr,
@@ -842,8 +865,10 @@ class GCNTrainer:
                 "loss_term_1": [],
                 "loss_term_2": [],
                 "loss_term_3": [],
+                "loss": [],
             }
 
+        total_datapoint_seen = 0
         for s in tqdm(range(self.config.steps)):
             gcn_batch, edge_matrix = self.graph_data_loader.next()
 
@@ -915,16 +940,48 @@ class GCNTrainer:
                 term3 = torch.dot(mask, log_probs)
                 loss += term3
 
+                total_datapoint_seen += 1
+
                 if plot_stats:
-                    trainer_stats["loss_term_1"].append(term1.item())
-                    trainer_stats["loss_term_2"].append(term2.item())
+                    trainer_stats["loss_term_1"].append(-term1.item())
+                    trainer_stats["loss_term_2"].append(-term2.item())
                     trainer_stats["loss_term_3"].append(term3.item())
+                    trainer_stats["loss"].append(loss.item())
+
+                wandb.log(
+                    {
+                        "num_samples": total_datapoint_seen,
+                        "per_sample_loss": loss.item(),
+                        "loss_term_1": -term1.item(),
+                        "loss_term_2": -term2.item(),
+                        "loss_term_3": term3.item(),
+                    },
+                    step=total_datapoint_seen,
+                )
 
                 # logger.info(f'Step {s} sample {i} | term 1 {-term1.item()} | term 2 {-term2.item()} | term 3 {term3.item()}')
 
             loss /= batch_size  # prevent exploding gradients while optimizing same objective
 
             loss.backward()
+
+            device = next(self.gcn.parameters()).device
+            sum_of_squares = torch.tensor(0.0, device=device)
+            for p in self.gcn.parameters():
+                if p.requires_grad and p.grad is not None:
+                    sum_of_squares += p.grad.norm(2).pow(2)
+
+            grad_norm = sum_of_squares.sqrt().item()
+            wandb.log(
+                {
+                    "gcn_loss": loss.item(),
+                    "grad_norm": grad_norm,
+                    "mask_K": self.config.mask_K,
+                    "total steps": self.config.steps,
+                    "learning_rate": self.config.lr,
+                    "weight_decay": self.config.weight_decay,
+                },
+            )
             adam_optimizer.step()
             adam_optimizer.zero_grad()
             if (1 + s) % self.config.logging_steps == 0:
@@ -940,10 +997,11 @@ class GCNTrainer:
             ax.plot(x, trainer_stats["loss_term_1"], label="term 1")
             ax.plot(x, trainer_stats["loss_term_2"], label="term 2")
             ax.plot(x, trainer_stats["loss_term_3"], label="term 3")
+            ax.plot(x, trainer_stats["loss"], label="loss")
 
             plt.xlabel("Samples")
             plt.ylabel("Loss")
-            plt.title(f"Compare 3 terms in GCN loss.")
+            plt.title(f"Compare 3 terms in GCN loss (loss = sum loss_terms)")
             ax.legend()
 
             mid_path = self.get_save_path(return_dir=True)
