@@ -30,16 +30,16 @@ def main():
 
     global_config = OmegaConf.load(working_dir / "configs/config.yaml")
     model_architectures = [
-        SupportedVisionModels.HookedResnet,
-        # SupportedVisionModels.HookedMLPClassifier,
+        # SupportedVisionModels.HookedResnet,
+        SupportedVisionModels.HookedMLPClassifier,
     ]
     supported_datasets = [
         # SupportedDatasets.IMAGENET_SMALL,
         # SupportedDatasets.PLANT_CLASSIFICATION,
         # SupportedDatasets.POKEMON_CLASSIFICATION,
         # SupportedDatasets.CIFAR100,
-        SupportedDatasets.SVHN,
-        # SupportedDatasets.MNIST,
+        # SupportedDatasets.SVHN,
+        SupportedDatasets.MNIST,
         # SupportedDatasets.CIFAR10,
     ]
     for ds, ma in product(supported_datasets, model_architectures):
@@ -50,7 +50,7 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=16,
+            vision_model_epochs=1,
             vision_model_max_steps_per_epoch=1024
             * 16,  # adjust to something larger, like 256
             vision_model_logging_steps=1024,
@@ -65,13 +65,13 @@ def main():
             graph_dataset_dir=Path.cwd() / "graphs",
             gcn_checkpoint_dir=Path.cwd() / "gcn_checkpoints",
             graph_batch_size=64,
-            use_sinkhorn_sampler=True,
+            use_sinkhorn_sampler=False,
             use_set_difference_masking_strategy=False,
             gcn_prior_distribution=GCNPriorDistribution.WEIGHT,
-            gcn_train_steps=64,  # adjust to something larger, like 130
+            gcn_train_steps=10,  # adjust to something larger, like 130
             gcn_learning_rate=1e-2,
             gcn_weight_decay=5e-4,
-            gcn_logging_steps=10,
+            gcn_logging_steps=5,
             sft_mode=SFTModes.Randomize_Forget,
             sft_steps=32,  # adjust to something larger, like 50
             eval_batch_size=256,
@@ -79,7 +79,7 @@ def main():
             eval_draw_category_probabilities=True,
             eval_metrics_base_path=Path.cwd() / "metrics_and_plots",
             topK_list=[8000],
-            kappa_list=[5000, 6000, 7000],
+            kappa_list=[7000],
             working_dir=Path.cwd(),
             # # these following optionals can be genereated by the pipeline
             # # when it is run in full but can also be passed in
@@ -99,6 +99,7 @@ def main():
 def view_training():
     p = Process(target=trackio.show)
     p.start()
+    return p
 
 
 def plot():
@@ -115,7 +116,9 @@ def genereate_tables(topK=8000, kappa=7000):
 
 
 if __name__ == "__main__":
-    view_training()
+    p = view_training()
     main()
+    p.terminate()
+    p.join()
     # plot()
     # genereate_tables(topK=8000, kappa=7000)

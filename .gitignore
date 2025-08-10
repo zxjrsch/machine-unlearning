@@ -28,3 +28,6 @@ ray/
 json/
 tables/
 ray*
+
+metrics_and_plots/
+graphs/

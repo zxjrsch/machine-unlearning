@@ -219,7 +219,10 @@ class Pipeline:
 
     def run(self) -> List[Dict]:
         self.run_vision_model_training()
-        # self.run_gcn_graph_generation()
-        # # NOTE gcn training is run in the method run_single_evaluation_round
-        # metric_dict_array = self.eval()
-        # return metric_dict_array
+        self.run_gcn_graph_generation()
+        # NOTE gcn training is run in the method run_single_evaluation_round
+        metric_dict_array = self.eval()
+        logger.info(
+            f"========== Run complete for {self.cfg.model_architecture.value} on {self.cfg.vision_dataset.value} =========="
+        )
+        return metric_dict_array

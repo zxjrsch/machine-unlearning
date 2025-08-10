@@ -212,7 +212,7 @@ class VisionModelTrainer:
         if ray.train.get_context().get_world_rank() == 0:
             wandb.init(
                 project=f"{self.config.architecture.value}_{self.config.vision_dataset.value}",  # _{self.runid[:3]}",
-                name=self.runid[:5],
+                name=f'{datetime.now().strftime("%d_%H_%M")}_{self.runid[:3]}',
                 # space_id='spaceId',
                 # dataset_id='ds',
                 config={
@@ -429,7 +429,7 @@ class VisionModelTrainer:
 
         # self.model.load_state_dict(model_state_dict)
 
-    # return path
+        return self.get_save_dir(include_suffix=False) / "model.pt"
 
     def train(self) -> Path:
         if self.config.num_workers == 1:

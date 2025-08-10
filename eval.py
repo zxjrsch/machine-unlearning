@@ -279,7 +279,7 @@ class Eval:
 
             # tune kappa to desired loss
             percent = round(
-                1 - self.config.kappa / self.graph_generator.num_vertices * 100, 2
+                (1 - self.config.kappa / self.graph_generator.num_vertices) * 100, 2
             )
             logger.info(
                 f"{self.get_model_graph_date_str(include_date=False)} | top-{self.config.topK} | target layer {self.config.mask_layer} | retaining (weights - kappa) = {self.graph_generator.num_vertices - self.config.kappa} ({percent} %) parameters."

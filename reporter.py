@@ -4,20 +4,13 @@ import re
 from dataclasses import dataclass
 from glob import glob
 from itertools import product
-from glob import glob
-from itertools import product
 from pathlib import Path
-from typing import Dict, List, Optional, Union
 from typing import Dict, List, Optional, Union
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import pandas as pd
 from loguru import logger
 from tabulate import tabulate
-
-from model import SupportedVisionModels
-from utils_data import SupportedDatasets
 
 from model import SupportedVisionModels
 from utils_data import SupportedDatasets
@@ -488,6 +481,7 @@ class Reporter:
         self.metrics_paths = self.get_experiment_paths(
             vision_model=vision_model, vision_dataset=vision_dataset, is_folder=False
         )
+
     def plot_single_experiment_set(
         self, vision_model: SupportedVisionModels, vision_dataset: SupportedDatasets
     ) -> None:
@@ -575,12 +569,10 @@ SimplifiedDatasetNames = {
 }
 
 
-
 @dataclass
 class LaTeXTableGeneratorConfig:
     metrics_dir: Path = Path("eval/metrics_and_plots/json")
     output_dir: Path = Path("tables/")
-
 
 
 class LaTeXTableGenerator:
@@ -593,7 +585,6 @@ class LaTeXTableGenerator:
             self.cfg.metrics_dir = Path(self.cfg.metrics_dir)
         if isinstance(self.cfg.output_dir, str):
             self.cfg.output_dir = Path(self.cfg.output_dir)
-
 
         self.cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -853,8 +844,6 @@ class LaTeXTableGenerator:
                 tabular_data=non_existent_files, headers=["Non-existent Files"]
             )
             logger.info(t)
-
-
 
 
 if __name__ == "__main__":
