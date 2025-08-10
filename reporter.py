@@ -77,12 +77,6 @@ class Reporter:
         vision_dataset: SupportedDatasets,
         is_folder: bool = False,
     ) -> List[Path]:
-    def get_experiment_paths(
-        self,
-        vision_model: SupportedVisionModels,
-        vision_dataset: SupportedDatasets,
-        is_folder: bool = False,
-    ) -> List[Path]:
         """
         Get folder or .json path depending on whether is_folder = True
         The list is sorted by topK value then kappa values
@@ -103,9 +97,6 @@ class Reporter:
             else:
                 experiment_string = p.split("/")[-2]
             model, ds = experiment_string.split("_")[:2]
-                experiment_string = p.split("/")[-1]
-            else:
-                experiment_string = p.split("/")[-2]
             model, ds = experiment_string.split("_")[:2]
             # logger.info(f'{model}, {ds}')
             return model == vision_model.value and ds == vision_dataset.value
@@ -560,9 +551,7 @@ class Reporter:
 
 
 # used for LaTeX table generation
-SimplifiedModelNames = {
-    SupportedVisionModels.HookedMLPClassifier: "MLP",
-    SupportedVisionModels.HookedResnet: "ResNet",
+
 SimplifiedModelNames = {
     SupportedVisionModels.HookedMLPClassifier: "MLP",
     SupportedVisionModels.HookedResnet: "ResNet",
@@ -615,13 +604,6 @@ class LaTeXTableGenerator:
         topK: int,
         kappa: int,
     ) -> Union[Dict, int]:
-    def get_metrics_dict(
-        self,
-        vision_model: SupportedVisionModels,
-        vision_dataset: SupportedVisionModels,
-        topK: int,
-        kappa: int,
-    ) -> Union[Dict, int]:
 
         # assumes standard naming convention for experiment json outputs base_dir/<model>_<dataset>_top-<k>-kappa_<kappa>
         path = (
@@ -640,7 +622,6 @@ class LaTeXTableGenerator:
             return -1
         else:
             with open(path, "r") as f:
-            with open(path, "r") as f:
                 try:
                     metrics = json.loads(f.readline().strip())
                     metrics = json.loads(f.readline().strip())
@@ -650,7 +631,6 @@ class LaTeXTableGenerator:
                     logger.info(f"@@@ Json file corrupt: {path}")
                     return -2
 
-    def generate_tables(self, topK: int = 8000, kappa: int = 7000, genereate_csv=False):
     def generate_tables(self, topK: int = 8000, kappa: int = 7000, genereate_csv=False):
         model_architectures = [
             SupportedVisionModels.HookedMLPClassifier,
@@ -678,9 +658,6 @@ class LaTeXTableGenerator:
         forget_set_score_table = []
 
         for ds, ma in product(supported_datasets, model_architectures):
-            logger.info(f"Generating data tables for {c} for {ma.value} on {ds.value}")
-            metrics = self.get_metrics_dict(
-                vision_model=ma, vision_dataset=ds, topK=topK, kappa=kappa
             logger.info(f"Generating data tables for {c} for {ma.value} on {ds.value}")
             metrics = self.get_metrics_dict(
                 vision_model=ma, vision_dataset=ds, topK=topK, kappa=kappa
@@ -819,8 +796,6 @@ class LaTeXTableGenerator:
             cols = ["MIMU", "SFT", "Random", "Original"]
             cols = ["MIMU", "SFT", "Random", "Original"]
             # Apply the formatter only to the subset of numeric columns
-            df.style.format("{:.3f}", subset=cols).hide(axis="index").to_latex(
-                self.cfg.output_dir / f"{file_name}.tex",
             df.style.format("{:.3f}", subset=cols).hide(axis="index").to_latex(
                 self.cfg.output_dir / f"{file_name}.tex",
                 caption=caption,
