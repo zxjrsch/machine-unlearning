@@ -14,7 +14,7 @@ runs/
 dummy.json
 babysit_run.log
 datasets/
-checkpoints/
+*checkpoints/
 eval/
 outputs/
 reports/
@@ -27,3 +27,4 @@ uv.lock
 ray/
 json/
 tables/
+ray*

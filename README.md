@@ -18,7 +18,7 @@ The current pipeline allows us to compute the following 5 metrics for unlearning
 5. Score under retain set (measures utility degradation)
 
 > [!NOTE] 
-> Raw metrics are generated as `json` files saved at `eval/Metrics and Plots/json/<model>_<dataset>_top-{K}_kappa_{kappa}/*.json`.
+> Raw metrics are generated as `json` files saved at `eval/metrics_and_plots/json/<model>_<dataset>_top-{K}_kappa_{kappa}/*.json`.
 
 The main object of our experiments is the `Pipeline` class that abstracts away all the details:
 
@@ -184,7 +184,11 @@ for f in *.tar.gz; do d="${f%.tar.gz}"; mkdir "$d" && tar -xzf "$f" -C "$d"; don
 uv run main.py
 
 # run in background and save log and returns pid 
-nohup uv run main.py > experiment-all-0-parallel.log  2>&1 &
+nohup uv run main.py > test-2.log  2>&1 &
+
+# or with venv activated
+nohup python main.py > test.log  2>&1 &
+
 ```
 
 > [!TIP]

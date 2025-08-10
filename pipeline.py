@@ -21,23 +21,31 @@ class PipelineConfig:
     vision_model_logging_steps: int
     vision_model_batch_size: int
     vision_model_learning_rate: float  # 1e-3
+    vision_model_checkpoint_dir: Path  # Path.cwd() / "checkpoints"
+    plot_vision_model_train_statistics: bool  # True
     device: str
-    use_distributed_training: bool  # True
     num_workers: int  # 2 [gpus]
     forget_class: int  # 0
     graph_dataset_size: int  # 1024
     graph_batch_size: int  # 64
+    graph_dataset_dir: Path  # Path.cwd() / 'Graphs'
+    gcn_checkpoint_dir: Path  # Path.cwd() / 'GCN_checkpoints'
     use_sinkhorn_sampler: bool  # True
+    use_set_difference_masking_strategy: bool  # False
     gcn_prior_distribution: GCNPriorDistribution  # GCNPriorDistribution.WEIGHT
     gcn_train_steps: int  # 130
     gcn_learning_rate: float  # 1e-2
+    gcn_weight_decay: float  # 5e-4
     gcn_logging_steps: int  # 10
+    sft_mode: SFTModes  # SFTModes.Randomize_Forget
     sft_steps: int  # 50
     eval_batch_size: int  # 256
     eval_draw_plots: bool  # True
     eval_draw_category_probabilities: bool  # True
+    eval_metrics_base_path: Path  # Path("eval/metrics_and_plots")
     topK_list: List[int]  # [8000]
     kappa_list: List[int]  # [7000]
+    working_dir: Path  # Path().cwd
 
     # these following optionals can be genereated by the pipeline
     # when it is run in full but can also be passed in
@@ -66,22 +74,21 @@ class Pipeline:
         config = VisionModelTrainerConfig(
             architecture=self.cfg.model_architecture,
             vision_dataset=self.cfg.vision_dataset,
+            checkpoint_dir=self.cfg.vision_model_checkpoint_dir,
             logging_steps=self.cfg.vision_model_logging_steps,
-            plot_statistics=True,
+            plot_statistics=self.cfg.plot_vision_model_train_statistics,
             batch_size=self.cfg.vision_model_batch_size,
             epochs=self.cfg.vision_model_epochs,
             steps=self.cfg.vision_model_max_steps_per_epoch,
             lr=self.cfg.vision_model_learning_rate,
             device=self.cfg.device,
             num_workers=self.cfg.num_workers,
+            working_dir=self.cfg.working_dir,
         )
 
         trainer = VisionModelTrainer(config)
         a = perf_counter()
-        if self.cfg.use_distributed_training:
-            path = trainer.train_ddp()
-        else:
-            path = trainer.train()
+        path = trainer.train()
         b = perf_counter()
 
         logger.info(
@@ -106,7 +113,7 @@ class Pipeline:
             vision_model_type=self.cfg.model_architecture,
             unlearning_dataset=self.cfg.vision_dataset,
             checkpoint_path=self.trained_vision_model_path,
-            graph_dataset_dir=Path("./datasets/Graphs"),
+            graph_dataset_dir=self.cfg.graph_dataset_dir,
             graph_data_cardinaility=self.cfg.graph_dataset_size,
             process_save_batch_size=self.cfg.graph_batch_size,
             forget_class=self.cfg.forget_class,
@@ -140,17 +147,17 @@ class Pipeline:
             vision_model_architecture=self.cfg.model_architecture,
             vision_model_path=self.trained_vision_model_path,
             vision_dataset=self.cfg.vision_dataset,
-            gcn_dataset_dir=Path("datasets/Graphs"),
+            gcn_dataset_dir=self.cfg.graph_dataset_dir,
             device=self.cfg.device,
             mask_layer=-2,
             use_sinkhorn_sampler=self.cfg.use_sinkhorn_sampler,
             gcn_prior_distribution=self.cfg.gcn_prior_distribution,
             steps=self.cfg.gcn_train_steps,
             lr=self.cfg.gcn_learning_rate,
-            weight_decay=5e-4,
+            weight_decay=self.cfg.gcn_weight_decay,
             mask_K=topK,
             logging_steps=self.cfg.gcn_logging_steps,
-            gcn_checkpoint_path=Path("checkpoints/gcn"),
+            gcn_checkpoint_path=self.cfg.gcn_checkpoint_dir,
         )
         a = perf_counter()
         trainer = GCNTrainer(config=config)
@@ -181,13 +188,13 @@ class Pipeline:
             mask_layer=-2,
             topK=topK,
             kappa=kappa,
-            use_set_difference_masking_strategy=False,
+            use_set_difference_masking_strategy=self.cfg.use_set_difference_masking_strategy,
             use_sinkhorn_sampler=self.cfg.use_sinkhorn_sampler,
             sft_steps=self.cfg.sft_steps,
-            sft_mode=SFTModes.Randomize_Forget,
-            gcn_base_path=Path("checkpoints/gcn/"),
-            graph_data_base_path=Path("eval/Graphs"),
-            metrics_base_path=Path("eval/Metrics and Plots"),
+            sft_mode=self.cfg.sft_mode,
+            gcn_base_path=self.cfg.gcn_checkpoint_dir,
+            graph_data_base_path=self.cfg.graph_dir,
+            metrics_base_path=self.cfg.eval_metrics_base_path,
             batch_size=self.cfg.eval_batch_size,
             device=self.cfg.device,
             draw_eval_plots=self.cfg.eval_draw_plots,
@@ -212,7 +219,7 @@ class Pipeline:
 
     def run(self) -> List[Dict]:
         self.run_vision_model_training()
-        self.run_gcn_graph_generation()
-        # NOTE gcn training is run in the method run_single_evaluation_round
-        metric_dict_array = self.eval()
-        return metric_dict_array
+        # self.run_gcn_graph_generation()
+        # # NOTE gcn training is run in the method run_single_evaluation_round
+        # metric_dict_array = self.eval()
+        # return metric_dict_array

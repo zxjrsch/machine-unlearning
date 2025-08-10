@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+from loguru import logger
 from PIL import Image
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from torchvision import datasets
@@ -15,8 +16,12 @@ from datasets import load_dataset
 from imagenet_classes import IMAGENET2012_CLASSES
 
 turn_on_download = True
-workding_dir = Path.cwd()
-absolute_path = workding_dir / "datasets"
+working_dir = Path.cwd()
+absolute_path = os.path.expanduser("~/mimu/datasets")
+
+logger.info(
+    f"Data path for Torchvision datasets hard coded as: {absolute_path}, working dir {working_dir}"
+)
 
 
 class SupportedDatasets(Enum):
@@ -90,6 +95,9 @@ def get_unlearning_dataset(
 
     if dataset == SupportedDatasets.CIFAR100:
         if dataset_path is None:
+            logger.info(
+                "here MIMU_cifar100(forget_class=forget_class, batch_size=batch_size)"
+            )
             return MIMU_cifar100(forget_class=forget_class, batch_size=batch_size)
         else:
             return MIMU_cifar100(
@@ -749,7 +757,7 @@ if __name__ == "__main__":
     # hf_token = os.getenv("HF_TOKEN")
     # if not hf_token:
     #     raise AssertionError("Remember to place HF_TOKEN in .env file")
-    from time import perf_counter
+    pass
 
     # plants = MIMU_plant()
     # ds = plants.get_val_loader()
@@ -758,12 +766,17 @@ if __name__ == "__main__":
     # imagenet = ImageNetDataset()
     # loader = DataLoader(imagenet, 64)
     # batch = next(iter(loader))
-    a = perf_counter()
-    imgnet = MIMU_imagenet_small()
-    b = perf_counter()
-    print(f"init MIMU_imagenet_small data class in {b-a} sec ")
-    cls = imgnet.get_train_loader()
-    c = perf_counter()
-    print(f"get train loader MIMU_imagenet_small data class in {c-b} sec ")
-    print(next(iter(cls))[0].shape)
+    # a = perf_counter()
+    # imgnet = MIMU_imagenet_small()
+    # b = perf_counter()
+    # print(f"init MIMU_imagenet_small data class in {b-a} sec ")
+    # cls = imgnet.get_train_loader()
+    # c = perf_counter()
+    # print(f"get train loader MIMU_imagenet_small data class in {c-b} sec ")
+    # print(next(iter(cls))[0].shape)
+    # run this to download torchvision dataset for the first use case
+    cifar1000 = MIMU_cifar100()
+    cifar1000.get_train_loader()
+    # cifar1000.get_val_loader()
+
     # code.interact(local=locals())

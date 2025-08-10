@@ -17,6 +17,7 @@ import torch.nn.functional as F
 import trackio as wandb
 from loguru import logger
 from omegaconf import OmegaConf
+from ray.train import RunConfig
 from torch import Tensor, nn
 from torch.distributions import Categorical
 from tqdm import tqdm
@@ -30,8 +31,8 @@ from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
 try:
-    workding_dir = Path.cwd()
-    global_config = OmegaConf.load(workding_dir / "configs/config.yaml")
+    working_dir = Path.cwd()
+    global_config = OmegaConf.load(working_dir / "configs/config.yaml")
 except Exception:
     global_config = {"device": "cuda", "gcn_train_steps": 130}
 
@@ -42,6 +43,7 @@ class VisionModelTrainerStatistics:
         vision_model_architecture: SupportedVisionModels,
         vision_dataset: SupportedDatasets,
         val_interval_size: int,
+        working_dir: Path = Path.cwd(),
         device: str = global_config["device"],
     ):
         self.vision_model_architecture = vision_model_architecture
@@ -50,16 +52,20 @@ class VisionModelTrainerStatistics:
         self.test_loss = []
         self.test_score = []
         self.gradient_norm = []
+        self.id = datetime.now().strftime("%d_%H_%M")
+        self.working_dir = working_dir / "observability"
         self.save_dir = self.get_save_dir()
         self.device = device
         self.val_interval_size = val_interval_size
 
     def get_save_dir(self):
+        """Observability folder is used for single GPU training and not used for parallel training."""
         dir = (
-            Path("observability")
-            / f"{self.vision_model_architecture.value}_{self.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}"
+            self.working_dir
+            / f"{self.vision_model_architecture.value}_{self.vision_dataset.value}_{self.id}"
         )
         dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"VisionModelTrainerStatistics dif {dir}")
         return dir
 
     def record_train_loss(self, loss: float) -> None:
@@ -104,9 +110,8 @@ class VisionModelTrainerStatistics:
         plt.grid(True)
         plt.legend()
 
-        save_path = (
-            self.save_dir / f"train_val_loss_{datetime.now().strftime("%d_%H_%M")}.png"
-        )
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = self.save_dir / f"train_val_loss_{self.id}.png"
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -122,9 +127,9 @@ class VisionModelTrainerStatistics:
         plt.title("Resnet Gradient Norm")
         plt.grid(True)
 
-        save_path = (
-            self.save_dir / f"grad_norm_{datetime.now().strftime("%d_%H_%M")}.png"
-        )
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = self.save_dir / f"grad_norm_{self.id}.png"
+
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -139,9 +144,9 @@ class VisionModelTrainerStatistics:
         plt.title("Resnet Validation Score")
         plt.grid(True)
 
-        save_path = (
-            self.save_dir / f"test_score_{datetime.now().strftime("%d_%H_%M")}.png"
-        )
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = self.save_dir / f"test_score_{self.id}.png"
+
         plt.savefig(
             save_path, dpi=1000
         )  # You can change the filename and dpi as needed
@@ -157,7 +162,7 @@ class VisionModelTrainerStatistics:
 class VisionModelTrainerConfig:
     architecture: SupportedVisionModels = SupportedVisionModels.HookedResnet
     vision_dataset: SupportedDatasets = SupportedDatasets.MNIST
-    checkpoint_dir: Path | str = Path("checkpoints")
+    checkpoint_dir: Path | str = Path.cwd() / "checkpoints"
     logging_steps: int = 50
     plot_statistics: bool = True
     batch_size: int = 256
@@ -166,6 +171,7 @@ class VisionModelTrainerConfig:
     lr: float = 1e-3
     device: str = global_config["device"]
     num_workers: int = 2
+    working_dir: Path = Path.cwd()
 
 
 class VisionModelTrainer:
@@ -183,24 +189,270 @@ class VisionModelTrainer:
                 vision_dataset=config.vision_dataset,
                 val_interval_size=config.logging_steps,
                 device=config.device,
+                working_dir=config.working_dir,
             )
         self.runid = str(uuid.uuid1())
 
-        wandb.init(
-            project=f"{config.architecture.value}_{config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}",
-            config={
-                "epochs": config.epochs,
-                "learning_rate": config.lr,
-                "batch_size": config.batch_size,
-            },
-        )
-
-    def train(self, log_completion: bool = False) -> Path:
+    def ddp_training_loop(self, log_completion: bool = False):
         """Returns checkpoint path."""
         try:
             torch.set_float32_matmul_precision("high")
         except:
             logger.info("torch float32_matmul_precision not supported")
+
+        train_dataloader = get_unlearning_dataset(
+            dataset=self.config.vision_dataset, batch_size=self.config.batch_size
+        ).get_train_loader()
+
+        self.model = ray.train.torch.prepare_model(self.model)
+        train_dataloader = ray.train.torch.prepare_data_loader(train_dataloader)
+        adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
+        criterion = nn.CrossEntropyLoss()
+
+        if ray.train.get_context().get_world_rank() == 0:
+            wandb.init(
+                project=f"{self.config.architecture.value}_{self.config.vision_dataset.value}",  # _{self.runid[:3]}",
+                name=self.runid[:5],
+                # space_id='spaceId',
+                # dataset_id='ds',
+                config={
+                    "epochs": self.config.epochs,
+                    "learning_rate": self.config.lr,
+                    "batch_size": self.config.batch_size,
+                },
+            )
+            logger.info(f"Vision model batch size set to {self.config.batch_size}")
+
+        # images/second
+        c = 0
+        for epoch in range(self.config.epochs):
+            logger.info(f"Moving on to epoch {epoch}")
+            if ray.train.get_context().get_world_size() > 1:
+                train_dataloader.sampler.set_epoch(epoch)
+
+            # prepare data
+            step = 0
+            for input, target in train_dataloader:
+
+                if self.config.steps is not None and step == (self.config.steps):
+                    if (
+                        ray.train.get_context().get_world_rank() == 0
+                        or ray.train.get_context().get_world_rank() == 1
+                    ):
+                        logger.info(
+                            f"Breakout after training step {step} | total steps across epochs = {c} from worker {ray.train.get_context().get_world_rank()}"
+                        )
+                    break
+
+                # if ray.train.get_context().get_world_rank() == 0 or ray.train.get_context().get_world_rank() == 1:
+                #     logger.info(f'step {step} | total steps {c} from worker {ray.train.get_context().get_world_rank()}')
+
+                t = time.perf_counter()
+                adam_optimizer.zero_grad()
+
+                preds = self.model(input)
+                train_loss: Tensor = criterion(preds, target)
+
+                train_loss.backward()
+                total_norm = 0.0
+                for p in self.model.parameters():
+                    if p.grad is not None:
+                        param_norm = p.grad.data.norm(2)
+                        total_norm += param_norm.item() ** 2
+                total_norm = total_norm ** (1.0 / 2)
+
+                grad_norm = total_norm
+                adam_optimizer.step()
+
+                c += 1
+                step += 1
+
+                metrics = {"loss": train_loss.item(), "epoch": epoch, "step": step}
+
+                # logger.info(f'loss {train_loss.item()} at step {c} from worker {ray.train.get_context().get_world_rank()}')
+
+                if self.config.plot_statistics:
+                    metrics["grad_norm"] = self.statistics.get_grad_norm(self.model)
+                    grad_norm: float = self.statistics.get_grad_norm(self.model)
+                    self.statistics.record_grad_norm(grad_norm)
+                    self.statistics.record_train_loss(train_loss.item())
+
+                throughput = self.config.batch_size / (time.perf_counter() - t)
+
+                accuracy = (preds.argmax(1) == target).type(
+                    torch.float
+                ).sum().item() / self.config.batch_size
+
+                # throughput_list.append(t)
+                if ray.train.get_context().get_world_rank() == 0:
+                    wandb.log(
+                        {
+                            "train_loss": train_loss.item(),
+                            "train_accuracy": accuracy,
+                            "grad_norm": grad_norm,
+                            "throughput": throughput,
+                            "batch size": self.config.batch_size,
+                            "learning rate": self.config.lr,
+                        },
+                        step=c,
+                    )
+                    # logger.info(f'Grad norm {grad_norm}')
+
+                if c % self.config.logging_steps == 0:
+                    #     logger.info(f'{ray.train.get_context().get_world_rank()}| {c}')
+                    if ray.train.get_context().get_world_rank() == 0:
+                        #         # Save model state dict to 'model.pt' inside save_dir
+                        save_dir = self.get_save_dir(include_suffix=False)
+                        torch.save(self.model.state_dict(), save_dir / "model.pt")
+                        logger.info(f"Saved checkpoint at dir={save_dir}")
+                        # ray.train.report(
+                        #     metrics,
+                        #     checkpoint=ray.train.Checkpoint.from_directory(save_dir),
+                        # )
+
+                        #         logger.info(metrics)
+                        # average_throughput = int(sum(throughput) / len(throughput))
+                        # logger.info(
+                        #     f"Epoch {epoch} | Step {step} | {self.config.architecture.value} loss {round(train_loss.item(), 2)}| {average_throughput} images/second"
+                        # )
+                        # throughput_list = []
+                        a = time.perf_counter()
+                        logger.info("Starting validation")
+                        test_loss, accuracy = self.val()
+                        logger.info("Completed validation")
+                        wandb.log(
+                            {
+                                # "epoch": epoch,
+                                # "train_loss": train_loss.item(),
+                                "total steps": c,
+                                "test_loss": test_loss,
+                                "validation_accuracy": accuracy,
+                                # "grad_norm": self.statistics.get_grad_norm(self.model),
+                                # "throughput": throughput,
+                            },
+                            step=c,
+                        )
+                        b = time.perf_counter()
+                        logger.info(
+                            f"Epoch {epoch} | Step {step} | Validation took {b-a} sec | accuracy {accuracy}"
+                        )
+                        self.statistics.plot()
+                    # self.model.train()
+
+            if ray.train.get_context().get_world_rank() == 0:
+                logger.info(f"Completed epoch after {step} steps, evaluating.")
+                #         # Save model state dict to 'model.pt' inside save_dir
+                save_dir = self.get_save_dir(include_suffix=False)
+                torch.save(self.model.state_dict(), save_dir / "model.pt")
+                logger.info(f"Saved checkpoint at dir={save_dir}")
+                # ray.train.report(
+                #     metrics,
+                #     checkpoint=ray.train.Checkpoint.from_directory(save_dir),
+                # )
+
+                #         logger.info(metrics)
+                # average_throughput = int(sum(throughput) / len(throughput))
+                # logger.info(
+                #     f"Epoch {epoch} | Step {step} | {self.config.architecture.value} loss {round(train_loss.item(), 2)}| {average_throughput} images/second"
+                # )
+                # throughput_list = []
+                a = time.perf_counter()
+                logger.info("Starting validation")
+                test_loss, accuracy = self.val()
+                logger.info("Completed validation")
+                wandb.log(
+                    {
+                        # "epoch": epoch,
+                        # "train_loss": train_loss.item(),
+                        "total steps": c,
+                        "test_loss": test_loss,
+                        "validation_accuracy": accuracy,
+                        # "grad_norm": self.statistics.get_grad_norm(self.model),
+                        # "throughput": throughput,
+                    },
+                    step=c,
+                )
+                b = time.perf_counter()
+                logger.info(
+                    f"Epoch {epoch} | Step {step} | Validation took {b-a} sec | accuracy {accuracy}"
+                )
+                self.statistics.plot()
+        # checkpoint_path: Path = self.checkpoint()
+        # if log_completion:
+        #     logger.info(
+        #         f"{self.config.architecture.value} checkpoints saved to {checkpoint_path}"
+        #     )
+        #     logger.info(f"{self.config.architecture.value} training complete.")
+        # return checkpoint_path
+        if ray.train.get_context().get_world_rank() == 0:
+            wandb.finish()
+
+    def train_ddp(self) -> Path:
+
+        scaling_config = ray.train.ScalingConfig(
+            num_workers=self.config.num_workers, use_gpu=True
+        )
+
+        dataset_name = self.config.vision_dataset.value
+        model_name = self.config.architecture.value
+        trainer = ray.train.torch.TorchTrainer(
+            self.ddp_training_loop,
+            scaling_config=scaling_config,
+            run_config=RunConfig(
+                name=f"{model_name}_{dataset_name}_{self.runid[:3]}",
+                # storage_path=os.path.expanduser(Path.cwd() / "ray_results"),
+            ),
+            # [5a] If running in a multi-node cluster, this is where you
+            # should configure the run's persistent storage that is accessible
+            # across all worker nodes.
+            # run_config=ray.train.RunConfig(storage_path="s3://..."),
+        )
+        trainer.fit()
+        # with result.checkpoint.as_directory() as checkpoint_dir:
+        #     path = os.path.join(checkpoint_dir, "model.pt")
+        #     model_state_dict = torch.load(path)
+
+        #     self.model.load_state_dict(model_state_dict)
+        # with result.checkpoint.as_directory() as checkpoint_dir:
+        #     logger.info(f"checkpoint dir {checkpoint_dir}")
+        # path = os.path.join(checkpoint_dir, "model.pt")
+        # path = self.get_save_dir(include_suffix=False) / 'model.pt'
+        # model_state_dict = torch.load(path, weights_only=True)
+
+        # # Remove 'module.' prefix if present
+        # if any(k.startswith("module.") for k in model_state_dict.keys()):
+        #     new_state_dict = OrderedDict()
+        #     for k, v in model_state_dict.items():
+        #         name = k.replace("module.", "")  # remove 'module.' prefix
+        #         new_state_dict[name] = v
+        #     model_state_dict = new_state_dict
+
+        # self.model.load_state_dict(model_state_dict)
+
+    # return path
+
+    def train(self) -> Path:
+        if self.config.num_workers == 1:
+            return self.single_worker_train()
+        elif self.config.num_workers > 1:
+            # return self.ddp()
+            return self.train_ddp()
+
+    def single_worker_train(self, log_completion: bool = False) -> Path:
+        """Returns checkpoint path."""
+        try:
+            torch.set_float32_matmul_precision("high")
+        except:
+            logger.info("torch float32_matmul_precision not supported")
+
+        wandb.init(
+            project=f"{self.config.architecture.value}_{self.config.vision_dataset.value}_{self.runid[:3]}",
+            config={
+                "epochs": self.config.epochs,
+                "learning_rate": self.config.lr,
+                "batch_size": self.config.batch_size,
+            },
+        )
 
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
         criterion = nn.CrossEntropyLoss()
@@ -211,6 +463,7 @@ class VisionModelTrainer:
 
         # images/second
         throughput = []
+        c = 0
         for epoch in range(self.config.epochs):
 
             # prepare model
@@ -221,6 +474,7 @@ class VisionModelTrainer:
             a = time.perf_counter()
             step = 0
             for input, target in train_dataloader:
+                c += 1
                 if self.config.steps is not None and step == self.config.steps:
                     break
                 step += 1
@@ -244,10 +498,11 @@ class VisionModelTrainer:
                 throughput.append(self.config.batch_size / (time.perf_counter() - t))
                 wandb.log(
                     {
-                        "epoch": epoch,
+                        # "epoch": epoch,
                         "train_loss": train_loss.item(),
                         "grad_norm": self.statistics.get_grad_norm(self.model),
-                    }
+                    },
+                    step=c,
                 )
 
                 if (1 + step) % self.config.logging_steps == 0:
@@ -273,150 +528,29 @@ class VisionModelTrainer:
             logger.info(f"{self.config.architecture.value} training complete.")
         return checkpoint_path
 
-    def ddp_training_loop(self, log_completion: bool = False):
-        """Returns checkpoint path."""
-        try:
-            torch.set_float32_matmul_precision("high")
-        except:
-            logger.info("torch float32_matmul_precision not supported")
-
-        adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
-        criterion = nn.CrossEntropyLoss()
-
-        train_dataloader = get_unlearning_dataset(
-            dataset=self.config.vision_dataset, batch_size=self.config.batch_size
-        ).get_train_loader()
-
-        model = ray.train.torch.prepare_model(copy.deepcopy(self.model.to("cpu")))
-        train_dataloader = ray.train.torch.prepare_data_loader(train_dataloader)
-
-        # images/second
-        throughput = []
-        for epoch in range(self.config.epochs):
-            if ray.train.get_context().get_world_size() > 1:
-                train_dataloader.sampler.set_epoch(epoch)
-
-            # prepare data
-            time.perf_counter()
-            step = 0
-            for input, target in train_dataloader:
-                if self.config.steps is not None and step == self.config.steps:
-                    break
-                step += 1
-                t = time.perf_counter()
-
-                preds = model(input)
-                train_loss: Tensor = criterion(preds, target)
-
-                train_loss.backward()
-                adam_optimizer.step()
-
-                metrics = {"loss": train_loss.item(), "epoch": epoch, "step": step}
-
-                if self.config.plot_statistics:
-                    metrics["grad_norm"] = self.statistics.get_grad_norm(model)
-                    grad_norm: float = self.statistics.get_grad_norm(model)
-                    self.statistics.record_grad_norm(grad_norm)
-                    self.statistics.record_train_loss(train_loss.item())
-
-                adam_optimizer.zero_grad()
-
-                throughput.append(self.config.batch_size / (time.perf_counter() - t))
-
-                if (1 + step) % self.config.logging_steps == 0:
-                    save_dir = self.get_save_dir(include_suffix=False)
-
-                    # Save model state dict to 'model.pt' inside save_dir
-                    torch.save(model.state_dict(), save_dir / "model.pt")
-
-                    ray.train.report(
-                        metrics,
-                        checkpoint=ray.train.Checkpoint.from_directory(save_dir),
-                    )
-
-                    ray.train.report(
-                        metrics,
-                        checkpoint=ray.train.Checkpoint.from_directory(save_dir),
-                    )
-                    if ray.train.get_context().get_world_rank() == 0:
-                        print(metrics)
-                    # average_throughput = int(sum(throughput) / len(throughput))
-                    # logger.info(
-                    #     f"Epoch {epoch} | Step {step} | {self.config.architecture.value} loss {round(train_loss.item(), 2)}| {average_throughput} images/second"
-                    # )
-                    # throughput = []
-                    # a = time.perf_counter()
-                    # self.val()
-                    # b = time.perf_counter()
-                    # logger.info(
-                    #     f"Epoch {epoch} | Step {step} | Validation took {b-a} sec"
-                    # )
-                    # self.statistics.plot()
-                    # self.model.train()
-
-        # checkpoint_path: Path = self.checkpoint()
-        # if log_completion:
-        #     logger.info(
-        #         f"{self.config.architecture.value} checkpoints saved to {checkpoint_path}"
-        #     )
-        #     logger.info(f"{self.config.architecture.value} training complete.")
-        # return checkpoint_path
-
-    def train_ddp(self) -> Path:
-        scaling_config = ray.train.ScalingConfig(
-            num_workers=self.config.num_workers, use_gpu=True
-        )
-        trainer = ray.train.torch.TorchTrainer(
-            self.ddp_training_loop,
-            scaling_config=scaling_config,
-            # [5a] If running in a multi-node cluster, this is where you
-            # should configure the run's persistent storage that is accessible
-            # across all worker nodes.
-            # run_config=ray.train.RunConfig(storage_path="s3://..."),
-        )
-        result = trainer.fit()
-        # with result.checkpoint.as_directory() as checkpoint_dir:
-        #     path = os.path.join(checkpoint_dir, "model.pt")
-        #     model_state_dict = torch.load(path)
-
-        #     self.model.load_state_dict(model_state_dict)
-        with result.checkpoint.as_directory() as checkpoint_dir:
-            logger.info(f"checkpoint dir {checkpoint_dir}")
-            path = os.path.join(checkpoint_dir, "model.pt")
-            model_state_dict = torch.load(path)
-
-            # Remove 'module.' prefix if present
-            if any(k.startswith("module.") for k in model_state_dict.keys()):
-                from collections import OrderedDict
-
-                new_state_dict = OrderedDict()
-                for k, v in model_state_dict.items():
-                    name = k.replace("module.", "")  # remove 'module.' prefix
-                    new_state_dict[name] = v
-                model_state_dict = new_state_dict
-
-            self.model.load_state_dict(model_state_dict)
-
-        return path
-
     @torch.no_grad()
-    def val(self) -> None:
+    def val(self, model: Optional[nn.Module] = None) -> Tuple[float, float]:
+        """Returns test_los, accuracy"""
         # statistics
         test_loss = accuracy = 0
         num_batches = len(self.validation_dataloader)
         data_size = len(self.validation_dataloader.dataset)
 
         # prepare model
-        self.model = self.model.to(self.config.device)
-        self.model.eval()
+        if model is None:
+            model: nn.Module = self.model.to(self.config.device)
+            model.eval()
 
         criterion = nn.CrossEntropyLoss()
 
         for i, (input, target) in enumerate(self.validation_dataloader):
-            input: Tensor = input.to(self.config.device)
-            target: Tensor = target.to(self.config.device)
 
-            preds: torch.Tensor = self.model(input)
+            device = next(model.parameters()).device
+
+            input: Tensor = input.to(device)
+            target: Tensor = target.to(device)
+
+            preds: torch.Tensor = model(input)
             test_loss += criterion(preds, target).item()
 
             accuracy += (preds.argmax(1) == target).type(torch.float).sum().item()
@@ -428,9 +562,12 @@ class VisionModelTrainer:
             self.statistics.record_val_loss(test_loss)
             self.statistics.record_val_score(accuracy)
 
+        model.train()
+
         logger.info(
             f"Test loss {round(test_loss, 5)} | Score {round(100 * accuracy, 1)} %"
         )
+        return test_loss, accuracy
 
     def get_save_dir(self, include_suffix=True) -> Path:
 
@@ -440,20 +577,19 @@ class VisionModelTrainer:
         dataset_name = self.config.vision_dataset.value
         model_name = self.config.architecture.value
         main_dir: Path = (
-            self.config.checkpoint_dir / f"{model_name}_{dataset_name}_{self.runid}"
+            self.config.checkpoint_dir / f"{model_name}_{dataset_name}_{self.runid[:3]}"
         )
         main_dir.mkdir(exist_ok=True, parents=True)
 
-        datetime_run_id = datetime.now().strftime("%d_%H_%M")
         if include_suffix:
-            return main_dir / f"{model_name}_{dataset_name}_{datetime_run_id}.pt"
+            return main_dir / f"{model_name}_{dataset_name}_{self.runid[:3]}.pt"
         else:
             return main_dir
 
     def checkpoint(self) -> Path:
         """Returns checkpoint path."""
 
-        checkpoint_path = self.get_save_dir()
+        checkpoint_path = self.get_save_dir(include_suffix=True)
         torch.save(self.model.state_dict(), checkpoint_path)
         return checkpoint_path
 

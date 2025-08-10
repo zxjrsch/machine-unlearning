@@ -23,8 +23,8 @@ from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
 
 try:
-    workding_dir = Path.cwd()
-    global_config = OmegaConf.load(workding_dir / "configs/config.yaml")
+    working_dir = Path.cwd()
+    global_config = OmegaConf.load(working_dir / "configs/config.yaml")
 except Exception:
     global_config = {"device": "cuda"}
 
@@ -58,7 +58,7 @@ class EvalConfig:
     # subfolder will be created to suit model / dataset
     gcn_base_path: Path = Path("checkpoints/gcn/")
     graph_data_base_path: Path = Path("eval/Graphs")
-    metrics_base_path: Path = Path("eval/Metrics and Plots")
+    metrics_base_path: Path = Path("eval/metrics_and_plots")
 
     batch_size: int = 256
     device: str = global_config["device"]
