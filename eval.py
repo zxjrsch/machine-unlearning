@@ -102,6 +102,9 @@ class Eval:
         # sft unlearning baseline
         self.finetuned_unlearning_model = self.train_sft_model()
 
+        self.forget_set = None
+        self.retain_set = None
+
     def get_model_graph_date_str(self, include_date: bool = False) -> str:
         if include_date:
             return f'{self.config.vision_model.value}_{self.config.vision_dataset.value}_{datetime.now().strftime("%d_%H_%M")}'
@@ -582,33 +585,34 @@ class Eval:
 
     def eval_unlearning(self) -> Dict:
         """Evaluate model before and after MIMU masking on forget set."""
-
+        if self.forget_set is None:
+            self.forget_set = self.get_forget_set()
         logger.info("..... eval unlearning .....")
         before_masking_eval_metrics = self.inference(
             description="no masking on forget set",
             model=self.classifier,
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=True,
         )
         logger.info("1")
         after_masking_eval_metrics = self.inference(
             description="mimu on forget set",
             model=self.get_masked_model(),
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=True,
         )
 
         random_baseline_eval_metrics = self.inference(
             description="random on forget set (unlearning)",
             model=self.get_randomly_masked_model(),
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=True,
         )
 
         sft_baseline_eval_metrics = self.inference(
             description="SFT baseline on forget set",
             model=self.finetuned_unlearning_model,
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=True,
         )
 
@@ -662,31 +666,34 @@ class Eval:
 
         logger.info("..... eval performance degradation .....")
 
+        if self.retain_set is None:
+            self.retain_set = self.get_retain_set()
+
         before_masking_eval_metrics = self.inference(
             description="no masking on retain set",
             model=self.classifier,
-            data_loader=self.get_retain_set(),
+            data_loader=self.retain_set,
             is_forget_set=False,
         )
         logger.info(">>> after_masking_eval_metrics <<<")
         after_masking_eval_metrics = self.inference(
             description="mimu on retain set",
             model=self.get_masked_model(),
-            data_loader=self.get_retain_set(),
+            data_loader=self.retain_set,
             is_forget_set=False,
         )
         logger.info(">>> random_baseline_eval_metrics <<<")
         random_baseline_eval_metrics = self.inference(
             description="random retain set (degradation)",
             model=self.get_randomly_masked_model(),
-            data_loader=self.get_retain_set(),
+            data_loader=self.retain_set,
             is_forget_set=False,
         )
         logger.info(">>> sft_baseline_eval_metrics <<<")
         sft_baseline_eval_metrics = self.inference(
             description="SFT baseline on retain set",
             model=self.finetuned_unlearning_model,
-            data_loader=self.get_retain_set(),
+            data_loader=self.retain_set,
             is_forget_set=False,
         )
 
@@ -727,32 +734,34 @@ class Eval:
         """Eval whether mask identified weights important for predicting desired forget class."""
 
         logger.info("..... eval mask efficacy .....")
+        if self.forget_set is None:
+            self.forget_set = self.get_forget_set()
 
         before_masking_eval_metrics = self.inference(
             description="no masking on forget set",
             model=self.classifier,
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=True,
         )
 
         after_masking_eval_metrics = self.inference(
             description="pure class mask on forget set",
             model=self.model_mask_forget_class(),
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=True,
         )
 
         random_baseline_eval_metrics = self.inference(
             description="random forget set (efficacy)",
             model=self.get_randomly_masked_model(),
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=True,
         )
 
         sft_baseline_eval_metrics = self.inference(
             description="SFT baseline on forget set",
             model=self.finetuned_unlearning_model,
-            data_loader=self.get_forget_set(),
+            data_loader=self.forget_set,
             is_forget_set=False,
         )
 

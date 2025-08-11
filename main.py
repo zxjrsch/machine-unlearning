@@ -30,13 +30,13 @@ def main():
 
     global_config = OmegaConf.load(working_dir / "configs/config.yaml")
     model_architectures = [
-        SupportedVisionModels.HookedResnet,
-        # SupportedVisionModels.HookedMLPClassifier,
+        # SupportedVisionModels.HookedResnet,
+        SupportedVisionModels.HookedMLPClassifier,
     ]
     # we are dropping SupportedDatasets.POKEMON_CLASSIFICATION dataset for now
     supported_datasets = [
         # SupportedDatasets.SVHN,
-        # SupportedDatasets.MNIST,
+        SupportedDatasets.MNIST,
         # SupportedDatasets.CIFAR10,
         # SupportedDatasets.CIFAR100,
         # SupportedDatasets.IMAGENET_SMALL,
@@ -50,11 +50,11 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=8,
-            vision_model_max_steps_per_epoch=1024
+            vision_model_epochs=1,
+            vision_model_max_steps_per_epoch=1
             * 16,  # adjust to something larger, like 256
-            vision_model_logging_steps=1024,
-            vision_model_batch_size=512,  # 256,
+            vision_model_logging_steps=8,  # 1024,
+            vision_model_batch_size=4,  # 512,  # 256,
             vision_model_learning_rate=1e-3,
             vision_model_checkpoint_dir=Path.cwd() / "vision_checkpoints",
             plot_vision_model_train_statistics=True,
@@ -79,7 +79,7 @@ def main():
             eval_draw_category_probabilities=True,
             eval_metrics_base_path=Path.cwd() / "metrics_and_plots",
             topK_list=[8000],
-            kappa_list=[6000, 7000],
+            kappa_list=[7000],
             working_dir=Path.cwd(),
             # # these following optionals can be genereated by the pipeline
             # # when it is run in full but can also be passed in
@@ -88,10 +88,11 @@ def main():
             # gcn_path: Optional[Path] = None
         )
         pipeline = Pipeline(config)
-        pipeline.run(
-            trained_vision_model_path="vision_checkpoints/HookedResnet_PLANT_CLASSIFICATION_d6f/model.pt",
-            graph_dir="graphs/HookedResnet_PLANT_CLASSIFICATION",
-        )
+        pipeline.run()
+        # pipeline.run(
+        #     trained_vision_model_path="vision_checkpoints/HookedResnet_PLANT_CLASSIFICATION_d6f/model.pt",
+        #     graph_dir="graphs/HookedResnet_PLANT_CLASSIFICATION",
+        # )
         # try:
         #     pipeline.run()
         # except Exception as e:
@@ -123,6 +124,6 @@ if __name__ == "__main__":
     main()
     p.terminate()
     p.join()
-    # plot()
-    # for kappa in [6000, 7000]:
-    #     genereate_tables(topK=8000, kappa=kappa)
+    plot()
+    for kappa in [6000, 7000]:
+        genereate_tables(topK=8000, kappa=kappa)
