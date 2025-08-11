@@ -50,3 +50,18 @@ def test_pokemon():
         SupportedDatasets.POKEMON_CLASSIFICATION
     )
     assert torch.all(forget_batch[1] == forget_class * torch.ones_like(forget_batch[1]))
+
+
+def test_pokemon_loader():
+    pokemon_ds = MIMU_pokemon(batch_size=1)
+    pokemon_dl = pokemon_ds.get_single_class(class_id=0)
+    # batch = next(iter(pokemon_dl))
+    # logger.info(f'Pokemon single class loader batch shape: {batch[0].shape} | {1}')
+    # logger.info(batch)
+
+
+def test_mnist_count_numel():
+    mnist_ds = MIMU_mnist(batch_size=1, forget_class=0)
+    mnist_dl = mnist_ds.get_single_class(
+        class_id=0
+    )  # looger currently commented out in get_single_class method

@@ -31,16 +31,16 @@ def main():
     global_config = OmegaConf.load(working_dir / "configs/config.yaml")
     model_architectures = [
         SupportedVisionModels.HookedResnet,
-        SupportedVisionModels.HookedMLPClassifier,
+        # SupportedVisionModels.HookedMLPClassifier,
     ]
     supported_datasets = [
         # SupportedDatasets.SVHN,
         # SupportedDatasets.MNIST,
         # SupportedDatasets.CIFAR10,
-        # SupportedDatasets.IMAGENET_SMALL,
-        # SupportedDatasets.PLANT_CLASSIFICATION,
-        SupportedDatasets.POKEMON_CLASSIFICATION,
         # SupportedDatasets.CIFAR100,
+        # SupportedDatasets.IMAGENET_SMALL,
+        # SupportedDatasets.POKEMON_CLASSIFICATION,
+        SupportedDatasets.PLANT_CLASSIFICATION,
     ]
     for ds, ma in product(supported_datasets, model_architectures):
         logger.info(
@@ -50,12 +50,12 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=2,
-            vision_model_max_steps_per_epoch=2
+            vision_model_epochs=8,
+            vision_model_max_steps_per_epoch=1024
             * 16,  # adjust to something larger, like 256
-            vision_model_logging_steps=16,
-            vision_model_batch_size=1024, #256,
-            vision_model_learning_rate=1e-4,
+            vision_model_logging_steps=1024,
+            vision_model_batch_size=512,  # 256,
+            vision_model_learning_rate=1e-3,
             vision_model_checkpoint_dir=Path.cwd() / "vision_checkpoints",
             plot_vision_model_train_statistics=True,
             num_workers=2,  # num gpus,
@@ -68,7 +68,7 @@ def main():
             use_sinkhorn_sampler=True,
             use_set_difference_masking_strategy=False,
             gcn_prior_distribution=GCNPriorDistribution.WEIGHT,
-            gcn_train_steps=2,  # adjust to something larger, like 130
+            gcn_train_steps=1,  # adjust to something larger, like 130
             gcn_learning_rate=1e-2,
             gcn_weight_decay=5e-4,
             gcn_logging_steps=1,
@@ -88,7 +88,10 @@ def main():
             # gcn_path: Optional[Path] = None
         )
         pipeline = Pipeline(config)
-        pipeline.run()
+        pipeline.run(
+            trained_vision_model_path="vision_checkpoints/HookedResnet_PLANT_CLASSIFICATION_d6f/model.pt",
+            graph_dir="graphs/HookedResnet_PLANT_CLASSIFICATION",
+        )
         # try:
         #     pipeline.run()
         # except Exception as e:
@@ -120,7 +123,6 @@ if __name__ == "__main__":
     main()
     p.terminate()
     p.join()
-    plot()
-    for kappa in [6000, 7000]:
-        genereate_tables(topK=8000, kappa=kappa)
-
+    # plot()
+    # for kappa in [6000, 7000]:
+    #     genereate_tables(topK=8000, kappa=kappa)

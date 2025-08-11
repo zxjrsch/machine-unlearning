@@ -14,6 +14,7 @@ from loguru import logger
 from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from data import GraphGenerator
 from model import MaskingGCN, SupportedVisionModels, vision_model_loader
@@ -21,8 +22,6 @@ from sampler import DifferentiableTopK, GumbelSampler
 from trainer import SFTConfig, SFTModes, SFTTrainer
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
-from tqdm import tqdm
-
 
 try:
     working_dir = Path.cwd()
@@ -177,7 +176,8 @@ class Eval:
         for d in tqdm(range(get_vision_dataset_classes(self.config.vision_dataset))):
             ds = self.dataset.get_single_class(class_id=d, is_train=True)
             data = next(iter(ds))
-            data[0] = data[0]
+            if isinstance(data, Tuple):
+                data = list(data)
             representatives.append(data)
         self.dataset.reset_batch_size(new_batch_size=old_batch_size)
         return representatives
@@ -388,7 +388,6 @@ class Eval:
                 classifier_probs: Tensor = F.softmax(preds, dim=-1)
                 num_classes = preds.shape[-1]
 
-
                 if (
                     self.config.plot_category_probabilities
                     and not plotted
@@ -592,14 +591,14 @@ class Eval:
             data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
-        logger.info('1')
+        logger.info("1")
         after_masking_eval_metrics = self.inference(
             description="mimu on forget set",
             model=self.get_masked_model(),
             data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
-        
+
         random_baseline_eval_metrics = self.inference(
             description="random on forget set (unlearning)",
             model=self.get_randomly_masked_model(),

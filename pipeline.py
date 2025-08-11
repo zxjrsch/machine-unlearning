@@ -217,15 +217,34 @@ class Pipeline:
             metric_dict_array.append(d)
         return metric_dict_array
 
-    def run(self) -> List[Dict]:
-        self.run_vision_model_training()
-        # self.trained_vision_model_path = Path('<your_path>')
-        # self.trained_vision_model_path = Path('vision_checkpoints/HookedResnet_IMAGENET_SMALL_316/model.pt')
-        self.run_gcn_graph_generation()
-        # self.graph_dir = Path('graphs/HookedResnet_IMAGENET_SMALL')
-        # NOTE gcn training is run in the method run_single_evaluation_round
+    def run(
+        self,
+        trained_vision_model_path: Optional[str] = None,
+        graph_dir: Optional[str] = None,
+    ) -> List[Dict]:
+        if trained_vision_model_path is None:
+            self.run_vision_model_training()
+        else:
+            logger.info(
+                f"Hardcoding vision model from checkpoint at {trained_vision_model_path}"
+            )
+            self.trained_vision_model_path = Path(trained_vision_model_path)
+
+        if graph_dir is not None and trained_vision_model_path is None:
+            raise AssertionError(
+                "If graph_dir is provided, then trained_vision_model_path must also be provided"
+            )
+        elif graph_dir is not None and trained_vision_model_path is not None:
+            logger.info(f"Hardcoding graph dataset from {graph_dir}")
+            self.graph_dir = Path(graph_dir)
+        else:
+            # NOTE gcn training is run in the method run_single_evaluation_round
+            self.run_gcn_graph_generation()
+
         metric_dict_array = self.eval()
+
         logger.info(
             f"========== Run complete for {self.cfg.model_architecture.value} on {self.cfg.vision_dataset.value} =========="
         )
+
         return metric_dict_array

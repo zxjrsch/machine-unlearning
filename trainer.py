@@ -841,8 +841,7 @@ class GCNTrainer:
         # run_tag = tag_split[-1]
 
         model_tag, *data_parts, run_tag = tag.split("_")
-        data_tag = "_".join(data_parts)
-
+        "_".join(data_parts)
 
         # logger.info(f'GCN tag {tag} | {model_tag} | {data_tag} | {run_tag}')
         sampler = "sinkhorn" if self.config.use_sinkhorn_sampler else "gumbel"

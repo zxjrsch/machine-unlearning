@@ -16,6 +16,7 @@ from datasets import load_dataset
 from imagenet_classes import IMAGENET2012_CLASSES
 
 turn_on_download = True
+num_cpu = 64
 working_dir = Path.cwd()
 absolute_path = os.path.expanduser("~/mimu/datasets")
 
@@ -217,6 +218,8 @@ class MIMU_mnist(UnlearningDataset):
             download=turn_on_download,
         )
         desired_indices = (dataset.targets == class_id).nonzero(as_tuple=True)[0]
+        # logger.info(desired_indices)
+        # logger.info(f'MNIST single class loader found {desired_indices.numel()} instances.')
         desired_data = Subset(dataset, desired_indices)
         return DataLoader(dataset=desired_data, batch_size=self.batch_size)
 
@@ -575,7 +578,7 @@ class MIMU_pokemon(UnlearningDataset):
 
     def get_dataset(self, split: str):
         return (
-            load_dataset(self.dataset_path, split=split, num_proc=64)
+            load_dataset(self.dataset_path, split=split, num_proc=num_cpu)
             .with_format("torch")
             .with_transform(MIMU_pokemon.batch_transform)
         )
@@ -601,17 +604,18 @@ class MIMU_pokemon(UnlearningDataset):
         )
 
     def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
-
+        # NOTE is_train=True is hard coded to avoid empty classes
+        is_train = True
         if is_train:
             dataset = self.get_dataset(split="train").filter(
-                lambda x: x["label"] == class_id
+                lambda x: x["label"] == class_id, num_proc=num_cpu
             )
         else:
             dataset_1 = self.get_dataset(split="validation").filter(
-                lambda x: x["label"] == class_id
+                lambda x: x["label"] == class_id, num_proc=num_cpu
             )
             dataset_2 = self.get_dataset(split="test").filter(
-                lambda x: x["label"] == class_id
+                lambda x: x["label"] == class_id, num_proc=num_cpu
             )
             dataset = ConcatDataset([dataset_1, dataset_2])
 
@@ -623,16 +627,18 @@ class MIMU_pokemon(UnlearningDataset):
         )
 
     def get_retain_set(self, is_train: bool = True) -> DataLoader:
+        # NOTE is_train=True is hard coded to avoid empty classes
+        is_train = True
         if is_train:
             dataset = self.get_dataset(split="train").filter(
-                lambda x: x["label"] != self.forget_class
+                lambda x: x["label"] != self.forget_class, num_proc=num_cpu
             )
         else:
             dataset_1 = self.get_dataset(split="validation").filter(
-                lambda x: x["label"] != self.forget_class
+                lambda x: x["label"] != self.forget_class, num_proc=num_cpu
             )
             dataset_2 = self.get_dataset(split="test").filter(
-                lambda x: x["label"] != self.forget_class
+                lambda x: x["label"] != self.forget_class, num_proc=num_cpu
             )
             dataset = ConcatDataset([dataset_1, dataset_2])
         return DataLoader(
@@ -693,7 +699,7 @@ class MIMU_plant(UnlearningDataset):
                         if enforce_limit
                         else "train"
                     ),
-                    num_proc=64,
+                    num_proc=num_cpu,
                 )
                 .with_format("torch")
                 .with_transform(MIMU_plant.batch_transform)
@@ -704,7 +710,7 @@ class MIMU_plant(UnlearningDataset):
                 load_dataset(
                     self.dataset_path + "/test",
                     split=f"train[:{self.data_cardinality_limit}]",
-                    num_proc=64,
+                    num_proc=num_cpu,
                 )
                 .with_format("torch")
                 .with_transform(MIMU_plant.batch_transform)
@@ -730,8 +736,9 @@ class MIMU_plant(UnlearningDataset):
         )
 
     def get_single_class(self, class_id: int, is_train: bool = True) -> DataLoader:
-        dataset = self.get_dataset(is_train=is_train, enforce_limit=True).filter(
-            lambda x: x["label"] == class_id
+        # NOTE is_train=True is hard coded to avoid empty classes
+        dataset = self.get_dataset(is_train=True, enforce_limit=True).filter(
+            lambda x: x["label"] == class_id, num_proc=num_cpu
         )
         return DataLoader(
             dataset,
@@ -741,8 +748,9 @@ class MIMU_plant(UnlearningDataset):
         )
 
     def get_retain_set(self, is_train: bool = True) -> DataLoader:
-        dataset = self.get_dataset(is_train=is_train, enforce_limit=True).filter(
-            lambda x: x["label"] != self.forget_class
+        # NOTE is_train=True is hard coded to avoid empty classes
+        dataset = self.get_dataset(is_train=True, enforce_limit=True).filter(
+            lambda x: x["label"] != self.forget_class, num_proc=num_cpu
         )
         return DataLoader(
             dataset,
