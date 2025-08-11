@@ -30,17 +30,17 @@ def main():
 
     global_config = OmegaConf.load(working_dir / "configs/config.yaml")
     model_architectures = [
-        # SupportedVisionModels.HookedResnet,
+        SupportedVisionModels.HookedResnet,
         SupportedVisionModels.HookedMLPClassifier,
     ]
     supported_datasets = [
+        SupportedDatasets.SVHN,
+        SupportedDatasets.MNIST,
+        SupportedDatasets.CIFAR10,
         # SupportedDatasets.IMAGENET_SMALL,
         # SupportedDatasets.PLANT_CLASSIFICATION,
         # SupportedDatasets.POKEMON_CLASSIFICATION,
         # SupportedDatasets.CIFAR100,
-        # SupportedDatasets.SVHN,
-        SupportedDatasets.MNIST,
-        # SupportedDatasets.CIFAR10,
     ]
     for ds, ma in product(supported_datasets, model_architectures):
         logger.info(
@@ -50,7 +50,7 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=2,
+            vision_model_epochs=4,
             vision_model_max_steps_per_epoch=1024
             * 16,  # adjust to something larger, like 256
             vision_model_logging_steps=1024,
@@ -68,18 +68,18 @@ def main():
             use_sinkhorn_sampler=True,
             use_set_difference_masking_strategy=False,
             gcn_prior_distribution=GCNPriorDistribution.WEIGHT,
-            gcn_train_steps=10,  # adjust to something larger, like 130
+            gcn_train_steps=2,  # adjust to something larger, like 130
             gcn_learning_rate=1e-2,
             gcn_weight_decay=5e-4,
-            gcn_logging_steps=5,
+            gcn_logging_steps=1,
             sft_mode=SFTModes.Randomize_Forget,
-            sft_steps=32,  # adjust to something larger, like 50
+            sft_steps=2,  # adjust to something larger, like 50
             eval_batch_size=256,
             eval_draw_plots=True,
             eval_draw_category_probabilities=True,
             eval_metrics_base_path=Path.cwd() / "metrics_and_plots",
             topK_list=[8000],
-            kappa_list=[7000],
+            kappa_list=[6000, 7000],
             working_dir=Path.cwd(),
             # # these following optionals can be genereated by the pipeline
             # # when it is run in full but can also be passed in
@@ -116,9 +116,11 @@ def genereate_tables(topK=8000, kappa=7000):
 
 
 if __name__ == "__main__":
-    p = view_training()
-    main()
-    p.terminate()
-    p.join()
-    # plot()
-    # genereate_tables(topK=8000, kappa=7000)
+    # p = view_training()
+    # main()
+    # p.terminate()
+    # p.join()
+    plot()
+    for kappa in [6000, 7000]:
+        genereate_tables(topK=8000, kappa=kappa)
+

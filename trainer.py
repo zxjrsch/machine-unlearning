@@ -835,6 +835,7 @@ class GCNTrainer:
         # vision_checkpoints/HookedResnet_CIFAR100_e63/model.pt
         tag = str(self.config.vision_model_path).split("/")[-2]
         model_tag, data_tag, run_tag = tag.split("_")
+        # logger.info(f'GCN tag {tag} | {model_tag} | {data_tag} | {run_tag}')
         sampler = "sinkhorn" if self.config.use_sinkhorn_sampler else "gumbel"
 
         wandb.init(
@@ -846,7 +847,7 @@ class GCNTrainer:
                 "weight_decay": self.config.weight_decay,
                 "use_sinkhorm": self.config.use_sinkhorn_sampler,
             },
-            name=tag,
+            name=f'topK-{self.config.mask_K}_{datetime.now().strftime("%d_%H_%M")}',
         )
 
         adam_optimizer = torch.optim.AdamW(
@@ -1011,7 +1012,7 @@ class GCNTrainer:
                 save_dir / f"GCN_{mid_path}_loss_terms_top-{self.config.mask_K}.png"
             )
             plt.savefig(save_path)
-
+        wandb.finish()
         ckpt_path = self.checkpoint()
         logger.info(f"GCN checkpoint saved at {ckpt_path}")
         logger.info(f"GCN Training complete with final loss {final_loss}")

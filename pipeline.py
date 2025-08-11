@@ -219,6 +219,7 @@ class Pipeline:
 
     def run(self) -> List[Dict]:
         self.run_vision_model_training()
+        # self.trained_vision_model_path = Path('<your_path>')
         self.run_gcn_graph_generation()
         # NOTE gcn training is run in the method run_single_evaluation_round
         metric_dict_array = self.eval()

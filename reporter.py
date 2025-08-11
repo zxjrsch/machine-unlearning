@@ -24,7 +24,7 @@ class xData:
 
 @dataclass
 class ReporterConfig:
-    metrics_dir: Path = Path("eval/metrics_and_plots/json")
+    metrics_dir: Path = Path("metrics_and_plots/json")
     report_dir: Path = Path("reports")
     # x_axis_data: str = xData.kappa
 
@@ -84,7 +84,7 @@ class Reporter:
         paths = glob(os.path.join(self.config.metrics_dir, search_pattern))
 
         def characteristic_fn(p: str) -> bool:
-            # example string: eval/metrics_and_plots/json/HookedResnet_MNIST_top-8000_kappa_2000/
+            # example string: metrics_and_plots/json/HookedResnet_MNIST_top-8000_kappa_2000/
             if is_folder:
                 experiment_string = p.split("/")[-1]
             else:
@@ -571,7 +571,7 @@ SimplifiedDatasetNames = {
 
 @dataclass
 class LaTeXTableGeneratorConfig:
-    metrics_dir: Path = Path("eval/metrics_and_plots/json")
+    metrics_dir: Path = Path("metrics_and_plots/json")
     output_dir: Path = Path("tables/")
 
 
