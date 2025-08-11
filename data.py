@@ -109,7 +109,7 @@ class GraphGenerator(ModelInspector):
         unlearning_dataset: SupportedDatasets,
         checkpoint_path: Path,
         graph_dataset_dir: Path = Path("./datasets/Graphs"),
-        graph_data_cardinaility: Optional[int] = 1024,
+        graph_data_cardinaility: int = 1024,
         process_save_batch_size: int = 64,
         forget_class: int = 9,
         device: str = global_config["device"],
@@ -445,20 +445,23 @@ class GraphGenerator(ModelInspector):
         self.model.capture_mode(is_on=True)
         self.model.eval()
 
-        eumerator = list(enumerate(self.data_loader))
-        if self.graph_data_cardinaility is not None:
-            logger.info(
-                f"Using graph_data_cardinaility = {self.graph_data_cardinaility}"
-            )
-            eumerator = eumerator[: self.graph_data_cardinaility]
-
+        # eumerator = list(enumerate(self.data_loader))
+        # if self.graph_data_cardinaility is not None:
+        #     logger.info(
+        #         f"Using graph_data_cardinaility = {self.graph_data_cardinaility}"
+        #     )
+        #     eumerator = eumerator[: self.graph_data_cardinaility]
+        c = 0
         feature_batch, batch_idx, total_batches = (
             [],
             0,
-            math.ceil(len(eumerator) / self.process_save_batch_size),
+            math.ceil(self.graph_data_cardinaility / self.process_save_batch_size),
         )
         input_batch, target_batch = [], []
-        for i, (input, target) in eumerator:
+        for i, (input, target) in enumerate(self.data_loader):
+            if c == self.graph_data_cardinaility:
+                break
+            c += 1
             input_batch.append(input)
             target_batch.append(target)
             input, target = input.to(self.device), target.to(self.device)

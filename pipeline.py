@@ -220,7 +220,9 @@ class Pipeline:
     def run(self) -> List[Dict]:
         self.run_vision_model_training()
         # self.trained_vision_model_path = Path('<your_path>')
+        # self.trained_vision_model_path = Path('vision_checkpoints/HookedResnet_IMAGENET_SMALL_316/model.pt')
         self.run_gcn_graph_generation()
+        # self.graph_dir = Path('graphs/HookedResnet_IMAGENET_SMALL')
         # NOTE gcn training is run in the method run_single_evaluation_round
         metric_dict_array = self.eval()
         logger.info(

@@ -21,6 +21,8 @@ from sampler import DifferentiableTopK, GumbelSampler
 from trainer import SFTConfig, SFTModes, SFTTrainer
 from utils_data import (SupportedDatasets, get_unlearning_dataset,
                         get_vision_dataset_classes)
+from tqdm import tqdm
+
 
 try:
     working_dir = Path.cwd()
@@ -172,7 +174,7 @@ class Eval:
         self.dataset.reset_batch_size(new_batch_size=1)
 
         representatives = []
-        for d in range(get_vision_dataset_classes(self.config.vision_dataset)):
+        for d in tqdm(range(get_vision_dataset_classes(self.config.vision_dataset))):
             ds = self.dataset.get_single_class(class_id=d, is_train=True)
             data = next(iter(ds))
             data[0] = data[0]
@@ -181,10 +183,16 @@ class Eval:
         return representatives
 
     def get_forget_set(self) -> DataLoader:
-        return self.dataset.get_forget_set(is_train=False)
+        try:
+            return self.dataset.get_forget_set(is_train=False)
+        except Exception:
+            return self.dataset.get_forget_set(is_train=True)
 
     def get_retain_set(self) -> DataLoader:
-        return self.dataset.get_retain_set(is_train=False)
+        try:
+            return self.dataset.get_retain_set(is_train=False)
+        except Exception:
+            return self.dataset.get_retain_set(is_train=True)
 
     def get_single_class(self, class_id: int) -> DataLoader:
         return self.dataset.get_single_class(class_id=class_id, is_train=False)
@@ -267,7 +275,6 @@ class Eval:
             )  # index from 1 to avoid taking log(0)
 
             num_retain_classes = len(mask_label_list) - 1
-            assert num_retain_classes == 9
             scores = retain_masks_sum / num_retain_classes - forget_mask
 
             feasibility_ranking = torch.log(target_layer) / torch.log(1 + scores)
@@ -379,11 +386,14 @@ class Eval:
 
                 preds: Tensor = model(input)
                 classifier_probs: Tensor = F.softmax(preds, dim=-1)
+                num_classes = preds.shape[-1]
+
 
                 if (
                     self.config.plot_category_probabilities
                     and not plotted
                     and is_forget_set
+                    and num_classes == 10
                 ):
                     # the mean probability is only meaningful over a single class, which is why we check is_forget_set
                     probs: List[float] = classifier_probs.mean(dim=0).tolist()
@@ -582,14 +592,14 @@ class Eval:
             data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
-
+        logger.info('1')
         after_masking_eval_metrics = self.inference(
             description="mimu on forget set",
             model=self.get_masked_model(),
             data_loader=self.get_forget_set(),
             is_forget_set=True,
         )
-
+        
         random_baseline_eval_metrics = self.inference(
             description="random on forget set (unlearning)",
             model=self.get_randomly_masked_model(),
@@ -785,7 +795,9 @@ class Eval:
         mask_efficacy_metrics = self.eval_mask_efficacy()
 
         self.eval_weight_distributions()
-        self.eval_class_probability()
+
+        # TODO needs speedup
+        # self.eval_class_probability()
 
         metrics = {
             "id": str(uuid.uuid1()),

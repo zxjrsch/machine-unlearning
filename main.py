@@ -34,12 +34,12 @@ def main():
         SupportedVisionModels.HookedMLPClassifier,
     ]
     supported_datasets = [
-        SupportedDatasets.SVHN,
-        SupportedDatasets.MNIST,
-        SupportedDatasets.CIFAR10,
+        # SupportedDatasets.SVHN,
+        # SupportedDatasets.MNIST,
+        # SupportedDatasets.CIFAR10,
         # SupportedDatasets.IMAGENET_SMALL,
         # SupportedDatasets.PLANT_CLASSIFICATION,
-        # SupportedDatasets.POKEMON_CLASSIFICATION,
+        SupportedDatasets.POKEMON_CLASSIFICATION,
         # SupportedDatasets.CIFAR100,
     ]
     for ds, ma in product(supported_datasets, model_architectures):
@@ -50,12 +50,12 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=4,
-            vision_model_max_steps_per_epoch=1024
+            vision_model_epochs=2,
+            vision_model_max_steps_per_epoch=2
             * 16,  # adjust to something larger, like 256
-            vision_model_logging_steps=1024,
-            vision_model_batch_size=256,
-            vision_model_learning_rate=1e-3,
+            vision_model_logging_steps=16,
+            vision_model_batch_size=1024, #256,
+            vision_model_learning_rate=1e-4,
             vision_model_checkpoint_dir=Path.cwd() / "vision_checkpoints",
             plot_vision_model_train_statistics=True,
             num_workers=2,  # num gpus,
@@ -116,10 +116,10 @@ def genereate_tables(topK=8000, kappa=7000):
 
 
 if __name__ == "__main__":
-    # p = view_training()
-    # main()
-    # p.terminate()
-    # p.join()
+    p = view_training()
+    main()
+    p.terminate()
+    p.join()
     plot()
     for kappa in [6000, 7000]:
         genereate_tables(topK=8000, kappa=kappa)

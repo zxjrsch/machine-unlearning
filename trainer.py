@@ -834,12 +834,21 @@ class GCNTrainer:
     def train(self, plot_stats: bool = True) -> Path:
         # vision_checkpoints/HookedResnet_CIFAR100_e63/model.pt
         tag = str(self.config.vision_model_path).split("/")[-2]
-        model_tag, data_tag, run_tag = tag.split("_")
+
+        # tag_split = tag.split("_")
+        # model_tag = tag_split[0]
+        # data_tag = "_".join(tag_split[1:-1])
+        # run_tag = tag_split[-1]
+
+        model_tag, *data_parts, run_tag = tag.split("_")
+        data_tag = "_".join(data_parts)
+
+
         # logger.info(f'GCN tag {tag} | {model_tag} | {data_tag} | {run_tag}')
         sampler = "sinkhorn" if self.config.use_sinkhorn_sampler else "gumbel"
 
         wandb.init(
-            project=f"GCN_{self.config.vision_model_architecture.value}_{self.config.vision_dataset.value}_{sampler}_{model_tag}_{data_tag}",
+            project=f"GCN_{self.config.vision_model_architecture.value}_{self.config.vision_dataset.value}_{sampler}",
             config={
                 "mask_K": self.config.mask_K,
                 "total steps": self.config.steps,
