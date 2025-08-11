@@ -635,7 +635,7 @@ class QwenVLM:
         )
         self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
 
-    def interence(
+    def inference(
         self,
         image_url="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
     ):
@@ -845,12 +845,14 @@ if __name__ == "__main__":
     # m = HookedResnet()
     # code.interact(local=locals())
 
-    # clip_classifier = CLIP()
-    # out = clip_classifier.classify()
-    # logger.info(out)
+    clip_classifier = CLIP()
+    out = clip_classifier.classify()
+    logger.info(out)
 
-    # med_vlm = GemmaVLM()
-    # med_vlm.inference()
+    med_vlm = GemmaVLM()
+    out = med_vlm.inference()
+    logger.info(out)
 
     qwen = QwenVLM()
-    qwen.inference()
+    out = qwen.inference()
+    logger.info(out)

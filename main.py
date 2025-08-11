@@ -33,13 +33,13 @@ def main():
         SupportedVisionModels.HookedResnet,
         # SupportedVisionModels.HookedMLPClassifier,
     ]
+    # we are dropping SupportedDatasets.POKEMON_CLASSIFICATION dataset for now
     supported_datasets = [
         # SupportedDatasets.SVHN,
         # SupportedDatasets.MNIST,
         # SupportedDatasets.CIFAR10,
         # SupportedDatasets.CIFAR100,
         # SupportedDatasets.IMAGENET_SMALL,
-        # SupportedDatasets.POKEMON_CLASSIFICATION,
         SupportedDatasets.PLANT_CLASSIFICATION,
     ]
     for ds, ma in product(supported_datasets, model_architectures):
@@ -119,10 +119,10 @@ def genereate_tables(topK=8000, kappa=7000):
 
 
 if __name__ == "__main__":
-    # p = view_training()
-    # main()
-    # p.terminate()
-    # p.join()
-    plot()
-    for kappa in [6000, 7000]:
-        genereate_tables(topK=8000, kappa=kappa)
+    p = view_training()
+    main()
+    p.terminate()
+    p.join()
+    # plot()
+    # for kappa in [6000, 7000]:
+    #     genereate_tables(topK=8000, kappa=kappa)

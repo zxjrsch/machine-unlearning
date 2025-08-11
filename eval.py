@@ -14,14 +14,12 @@ from loguru import logger
 from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 from data import GraphGenerator
 from model import MaskingGCN, SupportedVisionModels, vision_model_loader
 from sampler import DifferentiableTopK, GumbelSampler
 from trainer import SFTConfig, SFTModes, SFTTrainer
-from utils_data import (SupportedDatasets, get_unlearning_dataset,
-                        get_vision_dataset_classes)
+from utils_data import SupportedDatasets, get_unlearning_dataset
 
 try:
     working_dir = Path.cwd()
@@ -169,18 +167,19 @@ class Eval:
         return model
 
     def get_vision_class_representatives(self) -> List[Tuple[Tensor, Tensor]]:
-        old_batch_size = self.dataset.batch_size
-        self.dataset.reset_batch_size(new_batch_size=1)
+        # old_batch_size = self.dataset.batch_size
+        # self.dataset.reset_batch_size(new_batch_size=1)
 
-        representatives = []
-        for d in tqdm(range(get_vision_dataset_classes(self.config.vision_dataset))):
-            ds = self.dataset.get_single_class(class_id=d, is_train=True)
-            data = next(iter(ds))
-            if isinstance(data, Tuple):
-                data = list(data)
-            representatives.append(data)
-        self.dataset.reset_batch_size(new_batch_size=old_batch_size)
-        return representatives
+        # representatives = []
+        # for d in tqdm(range(get_vision_dataset_classes(self.config.vision_dataset))):
+        #     ds = self.dataset.get_single_class(class_id=d, is_train=True)
+        #     data = next(iter(ds))
+        #     if isinstance(data, Tuple):
+        #         data = list(data)
+        #     representatives.append(data)
+        # self.dataset.reset_batch_size(new_batch_size=old_batch_size)
+        # return representatives
+        return self.dataset.get_representatives()
 
     def get_forget_set(self) -> DataLoader:
         try:
@@ -669,21 +668,21 @@ class Eval:
             data_loader=self.get_retain_set(),
             is_forget_set=False,
         )
-
+        logger.info(">>> after_masking_eval_metrics <<<")
         after_masking_eval_metrics = self.inference(
             description="mimu on retain set",
             model=self.get_masked_model(),
             data_loader=self.get_retain_set(),
             is_forget_set=False,
         )
-
+        logger.info(">>> random_baseline_eval_metrics <<<")
         random_baseline_eval_metrics = self.inference(
             description="random retain set (degradation)",
             model=self.get_randomly_masked_model(),
             data_loader=self.get_retain_set(),
             is_forget_set=False,
         )
-
+        logger.info(">>> sft_baseline_eval_metrics <<<")
         sft_baseline_eval_metrics = self.inference(
             description="SFT baseline on retain set",
             model=self.finetuned_unlearning_model,
