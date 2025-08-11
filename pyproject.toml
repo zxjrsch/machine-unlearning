@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "accelerate>=1.10.0",
     "altair[all]>=5.5.0",
     "autoflake>=2.3.1",
     "black>=25.1.0",
@@ -22,6 +23,7 @@ dependencies = [
     "pandas>=2.3.1",
     "py-spy>=0.4.1",
     "pytest>=8.4.1",
+    "qwen-vl-utils[decord]==0.0.8",
     "ray[default,train]>=2.48.0",
     "scipy>=1.16.1",
     "streamlit>=1.48.0",
@@ -33,6 +35,7 @@ dependencies = [
     "torchvision>=0.22.1",
     "tqdm>=4.67.1",
     "trackio>=0.2.2",
+    "transformers>=4.55.0",
 ]
 
 [dependency-groups]

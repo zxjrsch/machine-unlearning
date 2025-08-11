@@ -119,10 +119,10 @@ def genereate_tables(topK=8000, kappa=7000):
 
 
 if __name__ == "__main__":
-    p = view_training()
-    main()
-    p.terminate()
-    p.join()
-    # plot()
-    # for kappa in [6000, 7000]:
-    #     genereate_tables(topK=8000, kappa=kappa)
+    # p = view_training()
+    # main()
+    # p.terminate()
+    # p.join()
+    plot()
+    for kappa in [6000, 7000]:
+        genereate_tables(topK=8000, kappa=kappa)

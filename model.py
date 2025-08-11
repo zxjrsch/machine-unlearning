@@ -5,13 +5,18 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Type, Union
 
+import requests
 import torch
 import torch.nn.functional as F
 from loguru import logger
+from PIL import Image
+from qwen_vl_utils import process_vision_info
 from torch import Tensor, nn
 from torch.utils.hooks import RemovableHandle
-from torch_geometric.nn import GCNConv, MessagePassing
+from torch_geometric.nn import GATConv, GCNConv, MessagePassing
 from torchvision.models.resnet import BasicBlock, Bottleneck, conv1x1
+from transformers import (AutoProcessor, Qwen2_5_VLForConditionalGeneration,
+                          pipeline)
 
 from utils_data import SupportedDatasets, get_vision_dataset_classes
 
@@ -302,6 +307,80 @@ class MaskingGCN(nn.Module):
         return F.softmax(self.proj_out(x), dim=1).squeeze(-1)
 
 
+# BETA
+class GATLayer(nn.Module):
+    def __init__(self, in_features, out_features, dropout, alpha, concat=True):
+        self.dropout = dropout  # drop prob = 0.6
+        self.in_features = in_features  #
+        self.out_features = out_features  #
+        self.alpha = alpha  # LeakyReLU with negative input slope, alpha = 0.2
+        self.concat = concat  # conacat = True for all layers except the output layer.
+
+        # Xavier Initialization of Weights
+        # Alternatively use weights_init to apply weights of choice
+        self.W = nn.Parameter(torch.zeros(size=(in_features, out_features)))
+        nn.init.xavier_uniform_(self.W.data, gain=1.414)
+
+        self.a = nn.Parameter(torch.zeros(size=(2 * out_features, 1)))
+        nn.init.xavier_uniform_(self.a.data, gain=1.414)
+
+        # LeakyReLU
+        self.leakyrelu = nn.LeakyReLU(self.alpha)
+
+    def forward(self, input, adj):
+        # Linear Transformation
+        h = torch.mm(input, self.W)  # matrix multiplication
+        N = h.size()[0]
+        # print(N)
+
+        # Attention Mechanism
+        a_input = torch.cat(
+            [h.repeat(1, N).view(N * N, -1), h.repeat(N, 1)], dim=1
+        ).view(N, -1, 2 * self.out_features)
+        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(2))
+
+        # Masked Attention
+        zero_vec = -9e15 * torch.ones_like(e)
+        attention = torch.where(adj > 0, e, zero_vec)
+
+        attention = F.softmax(attention, dim=1)
+        attention = F.dropout(attention, self.dropout, training=self.training)
+        h_prime = torch.matmul(attention, h)
+
+        if self.concat:
+            return F.elu(h_prime)
+        else:
+            return h_prime
+
+
+# BETA
+class GraphTransformer(torch.nn.Module):
+    def __init__(self, num_features=4, num_classes=10):
+        self.hid = 8
+        self.in_head = 8
+        self.out_head = 1
+
+        self.conv1 = GATConv(num_features, self.hid, heads=self.in_head, dropout=0.6)
+        self.conv2 = GATConv(
+            self.hid * self.in_head,
+            num_classes,
+            concat=False,
+            heads=self.out_head,
+            dropout=0.6,
+        )
+
+    def forward(self, data):
+        x, edge_index = data.x, data.edge_index
+
+        x = F.dropout(x, p=0.6, training=self.training)
+        x = self.conv1(x, edge_index)
+        x = F.elu(x)
+        x = F.dropout(x, p=0.6, training=self.training)
+        x = self.conv2(x, edge_index)
+
+        return F.log_softmax(x, dim=1)
+
+
 class HookedResnet(HookedModel, nn.Module):
     def __init__(
         self,
@@ -498,6 +577,105 @@ def model_factory(
     return model
 
 
+class CLIP:
+    def __init__(self):
+        self.pipeline = pipeline(
+            task="zero-shot-image-classification",
+            model="openai/clip-vit-base-patch32",
+            torch_dtype=torch.bfloat16,
+            # device=0,
+            device_map="auto",
+        )
+        self.labels = ["a photo of a cat", "a photo of a dog", "a photo of a car"]
+
+    def classify(self, image="http://images.cocodataset.org/val2017/000000039769.jpg"):
+        return self.pipeline(image=image, candidate_labels=self.labels)
+
+
+class GemmaVLM:
+    def __init__(self):
+        self.pipeline = pipeline(
+            "image-text-to-text",
+            model="google/medgemma-4b-it",
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+        )
+
+    def inference(
+        self,
+        image_url="https://upload.wikimedia.org/wikipedia/commons/c/c8/Chest_Xray_PA_3-8-2010.png",
+    ):
+
+        image = Image.open(
+            requests.get(image_url, headers={"User-Agent": "example"}, stream=True).raw
+        )
+
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "You are an expert radiologist."}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this X-ray"},
+                    {"type": "image", "image": image},
+                ],
+            },
+        ]
+
+        output = self.pipeline(text=messages, max_new_tokens=200)
+        return output[0]["generated_text"][-1]["content"]
+
+
+class QwenVLM:
+    def __init__(self):
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            "Qwen/Qwen2.5-VL-3B-Instruct", torch_dtype="auto", device_map="auto"
+        )
+        self.processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-3B-Instruct")
+
+    def interence(
+        self,
+        image_url="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
+    ):
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "image": image_url,
+                    },
+                    {"type": "text", "text": "Describe this image."},
+                ],
+            }
+        ]
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        image_inputs, video_inputs = process_vision_info(messages)
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        )
+        inputs = inputs.to("cuda")
+        generated_ids = self.model.generate(**inputs, max_new_tokens=128)
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :]
+            for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = self.processor.batch_decode(
+            generated_ids_trimmed,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
+        return output_text
+
+
 def vision_model_loader(
     model_type: SupportedVisionModels,
     dataset: SupportedDatasets,
@@ -662,7 +840,17 @@ def vision_model_loader(
 
 
 if __name__ == "__main__":
-    import code
+    # import code
 
-    m = HookedResnet()
-    code.interact(local=locals())
+    # m = HookedResnet()
+    # code.interact(local=locals())
+
+    # clip_classifier = CLIP()
+    # out = clip_classifier.classify()
+    # logger.info(out)
+
+    # med_vlm = GemmaVLM()
+    # med_vlm.inference()
+
+    qwen = QwenVLM()
+    qwen.inference()
