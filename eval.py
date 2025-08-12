@@ -799,11 +799,10 @@ class Eval:
     def eval(self, save_metrics: bool = True) -> Dict:
         unlearning_metrics = self.eval_unlearning()
         performance_degradation_metrics = self.eval_performance_degradation()
-        mask_efficacy_metrics = self.eval_mask_efficacy()
+        # mask_efficacy_metrics = self.eval_mask_efficacy()
 
-        self.eval_weight_distributions()
+        # self.eval_weight_distributions()
 
-        # TODO needs speedup
         # self.eval_class_probability()
 
         metrics = {
@@ -816,7 +815,7 @@ class Eval:
             "kappa": self.config.kappa,
             "unlearning_metrics": unlearning_metrics,
             "performance_degradation_metrics": performance_degradation_metrics,
-            "mask_efficacy_metrics": mask_efficacy_metrics,
+            # "mask_efficacy_metrics": mask_efficacy_metrics,
         }
         if save_metrics:
 

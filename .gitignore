@@ -18,7 +18,7 @@ datasets/
 eval/
 outputs/
 reports/
-observability/
+observability*/
 uv.lock
 .pytest_cache/
 *.log
@@ -29,5 +29,5 @@ json/
 tables/
 ray*
 
-metrics_and_plots/
+metrics_and_plots*/
 graphs/

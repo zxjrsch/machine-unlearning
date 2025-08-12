@@ -30,16 +30,17 @@ def main():
 
     global_config = OmegaConf.load(working_dir / "configs/config.yaml")
     model_architectures = [
-        # SupportedVisionModels.HookedResnet,
+        SupportedVisionModels.HookedResnet,
         SupportedVisionModels.HookedMLPClassifier,
     ]
     # we are dropping SupportedDatasets.POKEMON_CLASSIFICATION dataset for now
+    # due to data non-uniformity
     supported_datasets = [
-        # SupportedDatasets.SVHN,
+        SupportedDatasets.CIFAR100,
+        SupportedDatasets.IMAGENET_SMALL,
+        SupportedDatasets.SVHN,
         SupportedDatasets.MNIST,
-        # SupportedDatasets.CIFAR10,
-        # SupportedDatasets.CIFAR100,
-        # SupportedDatasets.IMAGENET_SMALL,
+        SupportedDatasets.CIFAR10,
         SupportedDatasets.PLANT_CLASSIFICATION,
     ]
     for ds, ma in product(supported_datasets, model_architectures):
@@ -120,10 +121,10 @@ def genereate_tables(topK=8000, kappa=7000):
 
 
 if __name__ == "__main__":
-    p = view_training()
-    main()
-    p.terminate()
-    p.join()
+    # p = view_training()
+    # main()
+    # p.terminate()
+    # p.join()
     plot()
-    for kappa in [6000, 7000]:
-        genereate_tables(topK=8000, kappa=kappa)
+
+    genereate_tables(topK=8000, kappa=7000)
