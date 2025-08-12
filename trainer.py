@@ -215,19 +215,19 @@ class VisionModelTrainer:
         adam_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.config.lr)
         criterion = nn.CrossEntropyLoss()
 
-        if ray.train.get_context().get_world_rank() == 0:
-            wandb.init(
-                project=f"{self.config.architecture.value}_{self.config.vision_dataset.value}",  # _{self.runid[:3]}",
-                name=f'{datetime.now().strftime("%d_%H_%M")}_{self.runid[:3]}',
-                # space_id='spaceId',
-                # dataset_id='ds',
-                config={
-                    "epochs": self.config.epochs,
-                    "learning_rate": self.config.lr,
-                    "batch_size": self.config.batch_size,
-                },
-            )
-            logger.info(f"Vision model batch size set to {self.config.batch_size}")
+        # if ray.train.get_context().get_world_rank() == 0:
+        wandb.init(
+            project=f"{self.config.architecture.value}_{self.config.vision_dataset.value}",  # _{self.runid[:3]}",
+            name=f'{datetime.now().strftime("%d_%H_%M")}_{self.runid[:3]}',
+            # space_id='spaceId',
+            # dataset_id='ds',
+            config={
+                "epochs": self.config.epochs,
+                "learning_rate": self.config.lr,
+                "batch_size": self.config.batch_size,
+            },
+        )
+        logger.info(f"Vision model batch size set to {self.config.batch_size}")
 
         # images/second
         c = 0
@@ -293,7 +293,26 @@ class VisionModelTrainer:
                         },
                         step=c,
                     )
+
                     # logger.info(f'Grad norm {grad_norm}')
+
+                wandb.log(
+                    {
+                        f"GPU {ray.train.get_context().get_world_rank()} temperature": torch.cuda.temperature(
+                            device=f"cuda:{ray.train.get_context().get_world_rank()}"
+                        ),
+                        f"GPU {ray.train.get_context().get_world_rank()} utilization": torch.cuda.utilization(
+                            device=f"cuda:{ray.train.get_context().get_world_rank()}"
+                        ),
+                        f"GPU {ray.train.get_context().get_world_rank()} power": torch.cuda.power_draw(
+                            device=f"cuda:{ray.train.get_context().get_world_rank()}"
+                        ),
+                        f"GPU {ray.train.get_context().get_world_rank()} memory allocated": torch.cuda.memory_allocated(
+                            device=f"cuda:{ray.train.get_context().get_world_rank()}"
+                        ),
+                    },
+                    step=c,
+                )
 
                 if c % self.config.logging_steps == 0:
                     #     logger.info(f'{ray.train.get_context().get_world_rank()}| {c}')
@@ -989,6 +1008,12 @@ class GCNTrainer:
                     "total steps": self.config.steps,
                     "learning_rate": self.config.lr,
                     "weight_decay": self.config.weight_decay,
+                    "GPU temperature": torch.cuda.temperature(device=self.device),
+                    "GPU utilization": torch.cuda.utilization(device=self.device),
+                    "GPU power": torch.cuda.power_draw(device=self.device),
+                    "GPU memory allocated": torch.cuda.memory_allocated(
+                        device=self.device
+                    ),
                 },
             )
             adam_optimizer.step()
