@@ -29,6 +29,13 @@ def main():
     )
 
     global_config = OmegaConf.load(working_dir / "configs/config.yaml")
+
+    resnet_topK = 62_000
+    mlp_topK = 8_000
+
+    resnet_kappa_array = [7_000, 39_000, 45_000, 52_000, 59_000]
+    mlp_kappa_array = [1000, 4_900, 5_700, 6_000, 7_000]
+
     model_architectures = [
         SupportedVisionModels.HookedResnet,
         SupportedVisionModels.HookedMLPClassifier,
@@ -36,12 +43,12 @@ def main():
     # we are dropping SupportedDatasets.POKEMON_CLASSIFICATION dataset for now
     # due to data non-uniformity
     supported_datasets = [
-        SupportedDatasets.CIFAR100,
         SupportedDatasets.IMAGENET_SMALL,
+        SupportedDatasets.PLANT_CLASSIFICATION,
+        SupportedDatasets.CIFAR100,
         SupportedDatasets.SVHN,
         SupportedDatasets.MNIST,
         SupportedDatasets.CIFAR10,
-        SupportedDatasets.PLANT_CLASSIFICATION,
     ]
     for ds, ma in product(supported_datasets, model_architectures):
         logger.info(
@@ -51,11 +58,11 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=1,
-            vision_model_max_steps_per_epoch=1
+            vision_model_epochs=32,
+            vision_model_max_steps_per_epoch=1024
             * 16,  # adjust to something larger, like 256
-            vision_model_logging_steps=8,  # 1024,
-            vision_model_batch_size=4,  # 512,  # 256,
+            vision_model_logging_steps=1024,  # 1024,
+            vision_model_batch_size=512,  # 512,  # 256,
             vision_model_learning_rate=1e-3,
             vision_model_checkpoint_dir=Path.cwd() / "vision_checkpoints",
             plot_vision_model_train_statistics=True,
@@ -69,18 +76,18 @@ def main():
             use_sinkhorn_sampler=True,
             use_set_difference_masking_strategy=False,
             gcn_prior_distribution=GCNPriorDistribution.WEIGHT,
-            gcn_train_steps=1,  # adjust to something larger, like 130
+            gcn_train_steps=32,  # adjust to something larger, like 130
             gcn_learning_rate=1e-2,
             gcn_weight_decay=5e-4,
-            gcn_logging_steps=1,
+            gcn_logging_steps=16,
             sft_mode=SFTModes.Randomize_Forget,
-            sft_steps=2,  # adjust to something larger, like 50
+            sft_steps=32,  # adjust to something larger, like 50
             eval_batch_size=256,
             eval_draw_plots=True,
             eval_draw_category_probabilities=True,
             eval_metrics_base_path=Path.cwd() / "metrics_and_plots",
-            topK_list=[8000],
-            kappa_list=[7000],
+            topK_list=[resnet_topK if ma == SupportedVisionModels.HookedResnet else mlp_topK],
+            kappa_list=resnet_kappa_array if ma == SupportedVisionModels.HookedResnet else mlp_kappa_array,
             working_dir=Path.cwd(),
             # # these following optionals can be genereated by the pipeline
             # # when it is run in full but can also be passed in
@@ -99,6 +106,7 @@ def main():
         # except Exception as e:
         #     logger.info(f"Error encountered for {ma.value} on {ds.value}")
         #     logger.info(e)
+    logger.info(f" | -------- Finished running main() pipeline  -------- ")
 
 
 def view_training():
@@ -121,10 +129,9 @@ def genereate_tables(topK=8000, kappa=7000):
 
 
 if __name__ == "__main__":
-    # p = view_training()
-    # main()
-    # p.terminate()
-    # p.join()
-    plot()
-
-    genereate_tables(topK=8000, kappa=7000)
+    p = view_training()
+    main()
+    p.terminate()
+    p.join()
+    # plot()
+    # genereate_tables(topK=8000, kappa=7000)
