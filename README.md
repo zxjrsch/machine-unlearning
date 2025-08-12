@@ -187,7 +187,7 @@ uv run main.py
 nohup uv run main.py > test-2.log  2>&1 &
 
 # or with venv activated
-nohup python main.py > run-all.log  2>&1 &
+nohup python main.py > run-all-2.log  2>&1 &
 ```
 
 > [!TIP]

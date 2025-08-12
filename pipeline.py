@@ -173,8 +173,6 @@ class Pipeline:
         """Metrics in raw json and plots are saved, metrics dictionary returned by this method."""
         assert self.trained_vision_model_path is not None
 
-        self.run_gcn_training(topK=topK)
-
         logger.info(
             f"========== Evaluating top-{topK} kappa-{kappa} for {self.cfg.model_architecture.value} on {self.cfg.vision_dataset.value} =========="
         )
@@ -210,11 +208,13 @@ class Pipeline:
         return eval.eval()
 
     def eval(self) -> List[Dict]:
-        topK_kappa_pairs = list(product(self.cfg.topK_list, self.cfg.kappa_list))
+        list(product(self.cfg.topK_list, self.cfg.kappa_list))
         metric_dict_array = []
-        for topK, kappa in topK_kappa_pairs:
-            d = self.run_single_evaluation_round(topK=topK, kappa=kappa)
-            metric_dict_array.append(d)
+        for topK in self.cfg.topK_list:
+            self.run_gcn_training(topK=topK)
+            for kappa in self.cfg.kappa_list:
+                d = self.run_single_evaluation_round(topK=topK, kappa=kappa)
+                metric_dict_array.append(d)
         return metric_dict_array
 
     def run(
@@ -222,6 +222,11 @@ class Pipeline:
         trained_vision_model_path: Optional[str] = None,
         graph_dir: Optional[str] = None,
     ) -> List[Dict]:
+
+        logger.info(
+            f"========== Initiating experiment for  {self.cfg.model_architecture.value} on {self.cfg.vision_dataset.value} =========="
+        )
+
         if trained_vision_model_path is None:
             self.run_vision_model_training()
         else:
@@ -238,13 +243,12 @@ class Pipeline:
             logger.info(f"Hardcoding graph dataset from {graph_dir}")
             self.graph_dir = Path(graph_dir)
         else:
-            # NOTE gcn training is run in the method run_single_evaluation_round
             self.run_gcn_graph_generation()
 
         metric_dict_array = self.eval()
 
         logger.info(
-            f"========== Run complete for {self.cfg.model_architecture.value} on {self.cfg.vision_dataset.value} =========="
+            f"========== Compled experiment for {self.cfg.model_architecture.value} on {self.cfg.vision_dataset.value} =========="
         )
 
         return metric_dict_array

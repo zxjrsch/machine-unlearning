@@ -12,6 +12,38 @@ from pipeline import Pipeline, PipelineConfig
 from reporter import *
 from trainer import GCNPriorDistribution, SFTModes
 
+resnet_topK = 62_000
+mlp_topK = 8_000
+
+resnet_kappa_array = [7_000, 39_000, 45_000, 52_000, 59_000]
+mlp_kappa_array = [1000, 4_900, 5_700, 6_000, 7_000]
+
+model_architectures = [
+    SupportedVisionModels.HookedResnet,
+    SupportedVisionModels.HookedMLPClassifier,
+]
+# we are dropping SupportedDatasets.POKEMON_CLASSIFICATION dataset for now
+# due to data non-uniformity
+supported_datasets = [
+    SupportedDatasets.PLANT_CLASSIFICATION,
+    SupportedDatasets.CIFAR100,
+    SupportedDatasets.IMAGENET_SMALL,
+    SupportedDatasets.SVHN,
+    SupportedDatasets.MNIST,
+    SupportedDatasets.CIFAR10,
+]
+
+
+def get_epochs(dataset: SupportedDatasets):
+    if dataset in [
+        SupportedDatasets.IMAGENET_SMALL,
+        SupportedDatasets.PLANT_CLASSIFICATION,
+        SupportedDatasets.CIFAR100,
+    ]:
+        return 8
+    else:
+        return 2
+
 
 def main():
     working_dir = Path.cwd()
@@ -30,26 +62,6 @@ def main():
 
     global_config = OmegaConf.load(working_dir / "configs/config.yaml")
 
-    resnet_topK = 62_000
-    mlp_topK = 8_000
-
-    resnet_kappa_array = [7_000, 39_000, 45_000, 52_000, 59_000]
-    mlp_kappa_array = [1000, 4_900, 5_700, 6_000, 7_000]
-
-    model_architectures = [
-        SupportedVisionModels.HookedResnet,
-        SupportedVisionModels.HookedMLPClassifier,
-    ]
-    # we are dropping SupportedDatasets.POKEMON_CLASSIFICATION dataset for now
-    # due to data non-uniformity
-    supported_datasets = [
-        SupportedDatasets.IMAGENET_SMALL,
-        SupportedDatasets.PLANT_CLASSIFICATION,
-        SupportedDatasets.CIFAR100,
-        SupportedDatasets.SVHN,
-        SupportedDatasets.MNIST,
-        SupportedDatasets.CIFAR10,
-    ]
     for ds, ma in product(supported_datasets, model_architectures):
         logger.info(
             f" | -------- Running pipeline for {ma.value} on {ds.value}  -------- "
@@ -58,7 +70,7 @@ def main():
         config = PipelineConfig(
             model_architecture=ma,
             vision_dataset=ds,
-            vision_model_epochs=32,
+            vision_model_epochs=get_epochs(ds),
             vision_model_max_steps_per_epoch=1024
             * 16,  # adjust to something larger, like 256
             vision_model_logging_steps=1024,  # 1024,
@@ -86,8 +98,14 @@ def main():
             eval_draw_plots=True,
             eval_draw_category_probabilities=True,
             eval_metrics_base_path=Path.cwd() / "metrics_and_plots",
-            topK_list=[resnet_topK if ma == SupportedVisionModels.HookedResnet else mlp_topK],
-            kappa_list=resnet_kappa_array if ma == SupportedVisionModels.HookedResnet else mlp_kappa_array,
+            topK_list=[
+                resnet_topK if ma == SupportedVisionModels.HookedResnet else mlp_topK
+            ],
+            kappa_list=(
+                resnet_kappa_array
+                if ma == SupportedVisionModels.HookedResnet
+                else mlp_kappa_array
+            ),
             working_dir=Path.cwd(),
             # # these following optionals can be genereated by the pipeline
             # # when it is run in full but can also be passed in
@@ -122,10 +140,28 @@ def plot():
     reporter.plot()
 
 
-def genereate_tables(topK=8000, kappa=7000):
+def genereate_tables():
     config = LaTeXTableGeneratorConfig()
     table_generator = LaTeXTableGenerator(config)
-    table_generator.generate_tables(topK=topK, kappa=kappa, genereate_csv=False)
+
+    # ResNet
+    for kappa in resnet_kappa_array:
+        table_generator.generate_tables(
+            vision_models=[SupportedVisionModels.HookedResnet],
+            datasets=supported_datasets,
+            topK=resnet_topK,
+            kappa=kappa,
+            genereate_csv=False,
+        )
+    # MLP
+    for kappa in mlp_kappa_array:
+        table_generator.generate_tables(
+            vision_models=[SupportedVisionModels.HookedMLPClassifier],
+            datasets=supported_datasets,
+            topK=mlp_topK,
+            kappa=kappa,
+            genereate_csv=False,
+        )
 
 
 if __name__ == "__main__":
@@ -133,5 +169,5 @@ if __name__ == "__main__":
     main()
     p.terminate()
     p.join()
-    # plot()
-    # genereate_tables(topK=8000, kappa=7000)
+    plot()
+    genereate_tables()
