@@ -1,9 +1,9 @@
-<p align="center">
-  <img src="./assets/Minimally_Invasive_Machine_Unlearning.png" alt="MIMU Logo" width="100%" height="100%" style="vertical-align: middle;"/>
-</p>
+<h1 align="center">
+  Machine Unlearning
+</h1>
 
 <p align="center">
-    <a href="https://github.com/layer6ai-labs/MIMU" target="_blank"><img src="https://img.shields.io/badge/GitHub-Code-4A90E2?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
+    <a href="https://github.com/zxjrsch/mimu" target="_blank"><img src="https://img.shields.io/badge/GitHub-Code-4A90E2?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a>
   <a href="https://deepwiki.com/zxjrsch/mimu"><img src="https://img.shields.io/badge/Deep Wiki-Online-00B89E?style=for-the-badge&logo=internet-explorer&logoColor=white" alt="Deep Wiki"></a>
 </p>
 
